@@ -5,13 +5,58 @@ import { groupTurns } from "./parser.js";
 import type { Turn } from "./types.js";
 import {
   parseNewMessages,
-  computeUpdatedState,
-  computeRecoveryState,
   mergeTranscriptMessages,
   countTotalLines,
 } from "./filesystem.js";
 import type { State } from "./filesystem.js";
 import { createTrace } from "./tracer.js";
+
+function computeUpdatedState(
+  state: State,
+  sessionId: string,
+  turnCount: number,
+  newTurns: number,
+  consumed: number,
+  lineOffsets: number[],
+  lastLine: number,
+): State {
+  const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
+
+  return {
+    ...state,
+    [sessionId]: {
+      last_line: newLastLine,
+      turn_count: turnCount + newTurns,
+      updated: new Date().toISOString(),
+    },
+  };
+}
+
+function computeRecoveryState(
+  state: State,
+  prevSessionId: string,
+  prevTotalLines: number,
+  prevTurnCount: number,
+  prevNewTurns: number,
+  currentSessionId: string,
+  currentLastLine: number,
+  currentTurnCount: number,
+  currentNewTurns: number,
+): State {
+  return {
+    ...state,
+    [prevSessionId]: {
+      last_line: prevTotalLines,
+      turn_count: prevTurnCount + prevNewTurns,
+      updated: new Date().toISOString(),
+    },
+    [currentSessionId]: {
+      last_line: currentLastLine,
+      turn_count: currentTurnCount + currentNewTurns,
+      updated: new Date().toISOString(),
+    },
+  };
+}
 
 interface IndexedTurn {
   turn: Turn;
