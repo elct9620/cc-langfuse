@@ -44,7 +44,7 @@ index.ts → tracer.ts → content.ts → types.ts
          → logger.ts
 ```
 
-`parser.ts` re-exports all types from `types.ts` and all functions from `content.ts`, so existing test imports (`from "../src/parser.js"`) remain valid.
+Each module imports directly from its dependencies; there are no re-exports.
 
 ### Hook Flow
 

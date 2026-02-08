@@ -5,11 +5,13 @@ import {
   isToolResult,
   getToolCalls,
   getTextContent,
+} from "../src/content.js";
+import {
   mergeAssistantParts,
   groupTurns,
   matchToolResults,
 } from "../src/parser.js";
-import type { Turn, ToolUseBlock, GroupTurnsResult } from "../src/parser.js";
+import type { ToolUseBlock } from "../src/types.js";
 
 describe("getContent", () => {
   it("extracts content from a message with nested message field", () => {
