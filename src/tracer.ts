@@ -14,11 +14,8 @@ import {
   matchToolResults,
   groupTurns,
 } from "./parser.js";
-import type { Turn } from "./parser.js";
+import type { Turn, Message } from "./types.js";
 import type { State } from "./filesystem.js";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Message = Record<string, any>;
 
 function computeTraceEnd(messages: Message[]): Date | undefined {
   return messages.reduce<Date | undefined>((latest, msg) => {
