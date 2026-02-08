@@ -18,6 +18,7 @@ import type { Turn, Message } from "./types.js";
 import {
   parseNewMessages,
   computeUpdatedState,
+  computeRecoveryState,
   mergeTranscriptMessages,
   countTotalLines,
 } from "./filesystem.js";
@@ -42,6 +43,19 @@ function computeTraceEnd(messages: Message[]): Date | undefined {
   }, undefined);
 }
 
+function childObservationOptions(
+  parent: LangfuseObservation,
+  startTime?: Date,
+): {
+  parentSpanContext: ReturnType<LangfuseObservation["otelSpan"]["spanContext"]>;
+  startTime?: Date;
+} {
+  return {
+    ...(startTime && { startTime }),
+    parentSpanContext: parent.otelSpan.spanContext(),
+  };
+}
+
 function createToolObservations(
   parentObservation: LangfuseObservation,
   toolCalls: ReturnType<typeof matchToolResults>,
@@ -59,8 +73,7 @@ function createToolObservations(
       },
       {
         asType: "tool",
-        ...(genStart && { startTime: genStart }),
-        parentSpanContext: parentObservation.otelSpan.spanContext(),
+        ...childObservationOptions(parentObservation, genStart),
       },
     );
     tool.update({ output: toolCall.output }).end(toolCall.timestamp);
@@ -92,8 +105,7 @@ function createGenerationObservation(ctx: GenerationContext): void {
     },
     {
       asType: "generation",
-      ...(genStart && { startTime: genStart }),
-      parentSpanContext: parentObservation.otelSpan.spanContext(),
+      ...childObservationOptions(parentObservation, genStart),
     },
   );
 
@@ -173,8 +185,10 @@ async function createTrace(
         },
         {
           asType: "agent",
-          ...(hasTraceStart && { startTime: traceStart }),
-          parentSpanContext: span.otelSpan.spanContext(),
+          ...childObservationOptions(
+            span,
+            hasTraceStart ? traceStart : undefined,
+          ),
         },
       );
 
@@ -229,6 +243,44 @@ export async function processTranscript(
   return { turns: turns.length, updatedState };
 }
 
+interface IndexedTurn {
+  turn: Turn;
+  index: number;
+}
+
+async function createSessionTraces(
+  sessionId: string,
+  turns: IndexedTurn[],
+  startingTurnCount: number,
+): Promise<void> {
+  if (turns.length === 0) return;
+
+  await propagateAttributes({ sessionId }, async () => {
+    for (let i = 0; i < turns.length; i++) {
+      await createTrace(sessionId, startingTurnCount + i + 1, turns[i].turn);
+    }
+  });
+}
+
+function partitionTurnsBySession(
+  turns: Turn[],
+  prevSessionId: string,
+): { prevTurns: IndexedTurn[]; currentTurns: IndexedTurn[] } {
+  const prevTurns: IndexedTurn[] = [];
+  const currentTurns: IndexedTurn[] = [];
+
+  for (let i = 0; i < turns.length; i++) {
+    const sid = getSessionId(turns[i].user);
+    if (sid === prevSessionId) {
+      prevTurns.push({ turn: turns[i], index: i });
+    } else {
+      currentTurns.push({ turn: turns[i], index: i });
+    }
+  }
+
+  return { prevTurns, currentTurns };
+}
+
 export async function processTranscriptWithRecovery(
   currentSessionId: string,
   currentFile: string,
@@ -257,72 +309,36 @@ export async function processTranscriptWithRecovery(
   const { turns, consumed } = groupTurns(merged.messages);
   if (turns.length === 0) return { turns: 0, updatedState: state };
 
-  // Partition turns by sessionId
-  const prevTurns: { turn: Turn; index: number }[] = [];
-  const currentTurns: { turn: Turn; index: number }[] = [];
+  const { prevTurns, currentTurns } = partitionTurnsBySession(
+    turns,
+    prevSessionId,
+  );
 
-  for (let i = 0; i < turns.length; i++) {
-    const sid = getSessionId(turns[i].user);
-    if (sid === prevSessionId) {
-      prevTurns.push({ turn: turns[i], index: i });
-    } else {
-      currentTurns.push({ turn: turns[i], index: i });
-    }
-  }
+  await createSessionTraces(prevSessionId, prevTurns, prevState.turn_count);
+  await createSessionTraces(
+    currentSessionId,
+    currentTurns,
+    currentState.turn_count,
+  );
 
-  // Create traces for prev session turns
-  if (prevTurns.length > 0) {
-    await propagateAttributes({ sessionId: prevSessionId }, async () => {
-      for (let i = 0; i < prevTurns.length; i++) {
-        await createTrace(
-          prevSessionId,
-          prevState.turn_count + i + 1,
-          prevTurns[i].turn,
-        );
-      }
-    });
-  }
-
-  // Create traces for current session turns
-  if (currentTurns.length > 0) {
-    await propagateAttributes({ sessionId: currentSessionId }, async () => {
-      for (let i = 0; i < currentTurns.length; i++) {
-        await createTrace(
-          currentSessionId,
-          currentState.turn_count + i + 1,
-          currentTurns[i].turn,
-        );
-      }
-    });
-  }
-
-  // Compute state for prev session: mark fully processed
   const prevTotalLines = countTotalLines(prevFile);
-  let updatedState: State = {
-    ...state,
-    [prevSessionId]: {
-      last_line: prevTotalLines,
-      turn_count: prevState.turn_count + prevTurns.length,
-      updated: new Date().toISOString(),
-    },
-  };
-
-  // Compute state for current session
-  // consumed is in merged-message space; subtract prevCount to get current-only consumed
   const currentConsumed = Math.max(0, consumed - merged.prevCount);
   const currentLastLine =
     currentConsumed > 0
       ? merged.currentLineOffsets[currentConsumed - 1]
       : currentState.last_line;
 
-  updatedState = {
-    ...updatedState,
-    [currentSessionId]: {
-      last_line: currentLastLine,
-      turn_count: currentState.turn_count + currentTurns.length,
-      updated: new Date().toISOString(),
-    },
-  };
+  const updatedState = computeRecoveryState(
+    state,
+    prevSessionId,
+    prevTotalLines,
+    prevState.turn_count,
+    prevTurns.length,
+    currentSessionId,
+    currentLastLine,
+    currentState.turn_count,
+    currentTurns.length,
+  );
 
   return { turns: turns.length, updatedState };
 }

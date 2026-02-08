@@ -100,6 +100,21 @@ function mergeTranscriptMessages(prevFile, prevLastLine, currentFile, currentLas
 		currentLineOffsets: current?.lineOffsets ?? []
 	};
 }
+function computeRecoveryState(state, prevSessionId, prevTotalLines, prevTurnCount, prevNewTurns, currentSessionId, currentLastLine, currentTurnCount, currentNewTurns) {
+	return {
+		...state,
+		[prevSessionId]: {
+			last_line: prevTotalLines,
+			turn_count: prevTurnCount + prevNewTurns,
+			updated: (/* @__PURE__ */ new Date()).toISOString()
+		},
+		[currentSessionId]: {
+			last_line: currentLastLine,
+			turn_count: currentTurnCount + currentNewTurns,
+			updated: (/* @__PURE__ */ new Date()).toISOString()
+		}
+	};
+}
 function computeUpdatedState(state, sessionId, turnCount, newTurns, consumed, lineOffsets, lastLine) {
 	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
 	return {
@@ -304,6 +319,12 @@ function computeTraceEnd(messages) {
 		return latest;
 	}, void 0);
 }
+function childObservationOptions(parent, startTime) {
+	return {
+		...startTime && { startTime },
+		parentSpanContext: parent.otelSpan.spanContext()
+	};
+}
 function createToolObservations(parentObservation, toolCalls, genStart) {
 	for (const toolCall of toolCalls) {
 		startObservation(`Tool: ${toolCall.name}`, {
@@ -314,8 +335,7 @@ function createToolObservations(parentObservation, toolCalls, genStart) {
 			}
 		}, {
 			asType: "tool",
-			...genStart && { startTime: genStart },
-			parentSpanContext: parentObservation.otelSpan.spanContext()
+			...childObservationOptions(parentObservation, genStart)
 		}).update({ output: toolCall.output }).end(toolCall.timestamp);
 		debug(`Created tool observation for: ${toolCall.name}`);
 	}
@@ -341,8 +361,7 @@ function createGenerationObservation(ctx) {
 		...usageDetails && { usageDetails }
 	}, {
 		asType: "generation",
-		...genStart && { startTime: genStart },
-		parentSpanContext: parentObservation.otelSpan.spanContext()
+		...childObservationOptions(parentObservation, genStart)
 	});
 	createToolObservations(generation, toolCalls, genStart);
 	generation.end(genEnd);
@@ -402,8 +421,7 @@ async function createTrace(sessionId, turnNum, turn) {
 			}
 		}, {
 			asType: "agent",
-			...hasTraceStart && { startTime: traceStart },
-			parentSpanContext: span.otelSpan.spanContext()
+			...childObservationOptions(span, hasTraceStart ? traceStart : void 0)
 		});
 		createGenerations(rootSpan, turn, model, userText);
 		if (traceEnd) {
@@ -443,6 +461,28 @@ async function processTranscript(sessionId, transcriptFile, state) {
 		updatedState
 	};
 }
+async function createSessionTraces(sessionId, turns, startingTurnCount) {
+	if (turns.length === 0) return;
+	await propagateAttributes({ sessionId }, async () => {
+		for (let i = 0; i < turns.length; i++) await createTrace(sessionId, startingTurnCount + i + 1, turns[i].turn);
+	});
+}
+function partitionTurnsBySession(turns, prevSessionId) {
+	const prevTurns = [];
+	const currentTurns = [];
+	for (let i = 0; i < turns.length; i++) if (getSessionId(turns[i].user) === prevSessionId) prevTurns.push({
+		turn: turns[i],
+		index: i
+	});
+	else currentTurns.push({
+		turn: turns[i],
+		index: i
+	});
+	return {
+		prevTurns,
+		currentTurns
+	};
+}
 async function processTranscriptWithRecovery(currentSessionId, currentFile, prevSessionId, prevFile, state) {
 	const prevState = state[prevSessionId] ?? {
 		last_line: 0,
@@ -463,41 +503,13 @@ async function processTranscriptWithRecovery(currentSessionId, currentFile, prev
 		turns: 0,
 		updatedState: state
 	};
-	const prevTurns = [];
-	const currentTurns = [];
-	for (let i = 0; i < turns.length; i++) if (getSessionId(turns[i].user) === prevSessionId) prevTurns.push({
-		turn: turns[i],
-		index: i
-	});
-	else currentTurns.push({
-		turn: turns[i],
-		index: i
-	});
-	if (prevTurns.length > 0) await propagateAttributes({ sessionId: prevSessionId }, async () => {
-		for (let i = 0; i < prevTurns.length; i++) await createTrace(prevSessionId, prevState.turn_count + i + 1, prevTurns[i].turn);
-	});
-	if (currentTurns.length > 0) await propagateAttributes({ sessionId: currentSessionId }, async () => {
-		for (let i = 0; i < currentTurns.length; i++) await createTrace(currentSessionId, currentState.turn_count + i + 1, currentTurns[i].turn);
-	});
+	const { prevTurns, currentTurns } = partitionTurnsBySession(turns, prevSessionId);
+	await createSessionTraces(prevSessionId, prevTurns, prevState.turn_count);
+	await createSessionTraces(currentSessionId, currentTurns, currentState.turn_count);
 	const prevTotalLines = countTotalLines(prevFile);
-	let updatedState = {
-		...state,
-		[prevSessionId]: {
-			last_line: prevTotalLines,
-			turn_count: prevState.turn_count + prevTurns.length,
-			updated: (/* @__PURE__ */ new Date()).toISOString()
-		}
-	};
 	const currentConsumed = Math.max(0, consumed - merged.prevCount);
 	const currentLastLine = currentConsumed > 0 ? merged.currentLineOffsets[currentConsumed - 1] : currentState.last_line;
-	updatedState = {
-		...updatedState,
-		[currentSessionId]: {
-			last_line: currentLastLine,
-			turn_count: currentState.turn_count + currentTurns.length,
-			updated: (/* @__PURE__ */ new Date()).toISOString()
-		}
-	};
+	const updatedState = computeRecoveryState(state, prevSessionId, prevTotalLines, prevState.turn_count, prevTurns.length, currentSessionId, currentLastLine, currentState.turn_count, currentTurns.length);
 	return {
 		turns: turns.length,
 		updatedState

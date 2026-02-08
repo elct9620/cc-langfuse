@@ -127,6 +127,32 @@ export function mergeTranscriptMessages(
   };
 }
 
+export function computeRecoveryState(
+  state: State,
+  prevSessionId: string,
+  prevTotalLines: number,
+  prevTurnCount: number,
+  prevNewTurns: number,
+  currentSessionId: string,
+  currentLastLine: number,
+  currentTurnCount: number,
+  currentNewTurns: number,
+): State {
+  return {
+    ...state,
+    [prevSessionId]: {
+      last_line: prevTotalLines,
+      turn_count: prevTurnCount + prevNewTurns,
+      updated: new Date().toISOString(),
+    },
+    [currentSessionId]: {
+      last_line: currentLastLine,
+      turn_count: currentTurnCount + currentNewTurns,
+      updated: new Date().toISOString(),
+    },
+  };
+}
+
 export function computeUpdatedState(
   state: State,
   sessionId: string,
