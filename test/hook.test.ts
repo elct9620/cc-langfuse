@@ -297,6 +297,60 @@ describe("processTranscript", () => {
     );
   });
 
+  it("only sets input on the first generation per turn", async () => {
+    const filePath = setupTranscript([
+      { sessionId: "sess1", type: "user", content: "do something" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [
+            { type: "text", text: "let me read that" },
+            {
+              type: "tool_use",
+              id: "t1",
+              name: "Read",
+              input: { path: "/test" },
+            },
+          ],
+        },
+      },
+      {
+        type: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "file data" },
+        ],
+      },
+      {
+        message: {
+          id: "m2",
+          role: "assistant",
+          content: [{ type: "text", text: "here is the result" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    // Two generations in one turn
+    expect(mockStartObservation).toHaveBeenCalledTimes(2);
+
+    // First generation should have input with user message
+    expect(mockStartObservation).toHaveBeenNthCalledWith(
+      1,
+      expect.any(String),
+      expect.objectContaining({
+        input: { role: "user", content: "do something" },
+      }),
+      { asType: "generation" },
+    );
+
+    // Second generation should NOT have input
+    const secondCallArgs = mockStartObservation.mock.calls[1][1];
+    expect(secondCallArgs).not.toHaveProperty("input");
+  });
+
   it("resumes from last processed line", async () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },

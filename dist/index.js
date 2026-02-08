@@ -238,16 +238,17 @@ async function createTrace(sessionId, turnNum, turn) {
 				session_id: sessionId
 			}
 		});
-		for (const assistant of turn.assistants) {
+		for (let i = 0; i < turn.assistants.length; i++) {
+			const assistant = turn.assistants[i];
 			const assistantText = getTextContent(assistant);
 			const assistantModel = assistant.message?.model ?? model;
 			const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
 			const generation = startObservation(assistantModel, {
 				model: assistantModel,
-				input: {
+				...i === 0 && { input: {
 					role: "user",
 					content: userText
-				},
+				} },
 				output: {
 					role: "assistant",
 					content: assistantText

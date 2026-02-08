@@ -39,7 +39,8 @@ async function createTrace(
       },
     });
 
-    for (const assistant of turn.assistants) {
+    for (let i = 0; i < turn.assistants.length; i++) {
+      const assistant = turn.assistants[i];
       const assistantText = getTextContent(assistant);
       const assistantModel = assistant.message?.model ?? model;
       const toolUseBlocks = getToolCalls(assistant);
@@ -49,7 +50,7 @@ async function createTrace(
         assistantModel,
         {
           model: assistantModel,
-          input: { role: "user", content: userText },
+          ...(i === 0 && { input: { role: "user", content: userText } }),
           output: { role: "assistant", content: assistantText },
           metadata: { tool_count: toolCalls.length },
         },
