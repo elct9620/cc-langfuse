@@ -29,8 +29,11 @@ describe("bin/cli.js", () => {
     expect(() => accessSync(cliBin, constants.X_OK)).not.toThrow();
   });
 
-  it("outputs package name and version", () => {
-    const output = execFileSync("node", [cliBin], { encoding: "utf8" }).trim();
-    expect(output).toBe(`${pkg.name} v${pkg.version}`);
+  it("exits silently without TRACE_TO_LANGFUSE", () => {
+    const output = execFileSync("node", [cliBin], {
+      encoding: "utf8",
+      env: { ...process.env, TRACE_TO_LANGFUSE: undefined },
+    }).trim();
+    expect(output).toBe("");
   });
 });
