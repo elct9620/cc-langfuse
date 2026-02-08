@@ -72,16 +72,16 @@ Triggered by Claude Code after each assistant response via `pnpm dlx`.
 
 Exits immediately if `TRACE_TO_LANGFUSE` is not `"true"`.
 
-| Step | Action                                                                                                 |
-| ---- | ------------------------------------------------------------------------------------------------------ |
-| 1    | Check `TRACE_TO_LANGFUSE` env var; exit if not enabled                                                 |
-| 2    | Read `session_id` and `transcript_path` from stdin JSON                                                |
-| 3    | Load state from `~/.claude/state/cc-langfuse_state.json`                                               |
-| 4    | Check transcript first line for previous session ID; if found and unprocessed, recover its turns first |
-| 5    | Parse new lines from the transcript since last processed line                                          |
-| 6    | Group messages into turns (user message -> assistant responses -> tool results)                        |
-| 7    | Create Langfuse traces and spans for each turn                                                         |
-| 8    | Update state file with new line count                                                                  |
+| Step | Action                                                                                                                        |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 1    | Check `TRACE_TO_LANGFUSE` env var; exit if not enabled                                                                        |
+| 2    | Read `session_id` and `transcript_path` from stdin JSON                                                                       |
+| 3    | Load state from `~/.claude/state/cc-langfuse_state.json`                                                                      |
+| 4    | Check transcript first line for previous session ID; if different from current and transcript exists, recover its turns first |
+| 5    | Parse new lines from the transcript since last processed line                                                                 |
+| 6    | Group messages into turns (user message -> assistant responses -> tool results)                                               |
+| 7    | Create Langfuse traces and spans for each turn                                                                                |
+| 8    | Update state file with new line count                                                                                         |
 
 ### Trace Structure in Langfuse
 
@@ -144,6 +144,26 @@ If a message lacks a `timestamp` field, timing for that observation is omitted (
 ### Incremental Processing
 
 - `last_line` only advances to the end of the last complete turn, not to the end of the transcript. An incomplete turn (a user message without a subsequent assistant response) is reprocessed on the next hook invocation.
+
+### Cross-Session Recovery
+
+When Claude Code exits Plan Mode, the session ID changes. The new transcript may begin with messages from the previous session (a user message from the old session followed by an assistant response under the new session). This creates a cross-session turn.
+
+**Detection**: The first line of the current transcript carries a `sessionId`. If it differs from the current session ID and the previous session's transcript file exists in the same directory, recovery is triggered.
+
+**Recovery does not check whether the previous session is already in state.** The previous session's `last_line` in state determines where to resume reading its transcript, so already-processed lines are naturally skipped. This handles two scenarios identically:
+
+| Scenario                                   | Previous session in state? | Behavior                                                                    |
+| ------------------------------------------ | -------------------------- | --------------------------------------------------------------------------- |
+| Previous session's Stop hook never fired   | No                         | Recover all unprocessed turns from previous transcript + cross-session turn |
+| Previous session's Stop hook already fired | Yes                        | Skip already-processed lines; recover only the cross-session turn           |
+
+**Turn attribution**: Each turn is attributed to the session that owns the user message. A cross-session turn (user from old session, assistant from new session) is attributed to the old session.
+
+| Turn's user sessionId | Attributed to    | Turn count incremented on            |
+| --------------------- | ---------------- | ------------------------------------ |
+| Previous session      | Previous session | `state[prevSessionId].turn_count`    |
+| Current session       | Current session  | `state[currentSessionId].turn_count` |
 
 ### Error Scenarios
 
