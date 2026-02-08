@@ -25,6 +25,14 @@ function computeTraceEnd(messages: Message[]): Date | undefined {
   }, undefined);
 }
 
+/**
+ * Translates parsed message data into Langfuse generation/tool observations.
+ *
+ * This function intentionally couples with parser/content helpers (getTextContent,
+ * getToolCalls, matchToolResults, etc.) — the tracer acts as a translation layer
+ * between the parsed transcript format and the Langfuse SDK. Introducing an
+ * intermediate adapter would add complexity without meaningful decoupling.
+ */
 function createGenerationObservation(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   parentObservation: any,
