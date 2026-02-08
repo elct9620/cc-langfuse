@@ -32,12 +32,38 @@ function saveState(state) {
 	mkdirSync(dirname(STATE_FILE), { recursive: true });
 	writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
+function safeReadDir(path) {
+	try {
+		return readdirSync(path);
+	} catch {
+		return [];
+	}
+}
+function safeStat(path) {
+	try {
+		return statSync(path);
+	} catch {
+		return null;
+	}
+}
+function extractSessionId(filePath) {
+	try {
+		const firstLine = readFileSync(filePath, "utf8").split("\n")[0];
+		const sessionId = JSON.parse(firstLine).sessionId ?? filePath.replace(/.*\//, "").replace(".jsonl", "");
+		debug(`Found transcript: ${filePath}, session: ${sessionId}`);
+		return {
+			sessionId,
+			filePath
+		};
+	} catch (e) {
+		debug(`Error reading transcript ${filePath}: ${e}`);
+		return null;
+	}
+}
 function findLatestTranscript() {
 	const projectsDir = join(homedir(), ".claude", "projects");
-	let dirs;
-	try {
-		dirs = readdirSync(projectsDir);
-	} catch {
+	const dirs = safeReadDir(projectsDir);
+	if (dirs.length === 0) {
 		debug(`Projects directory not found: ${projectsDir}`);
 		return null;
 	}
@@ -45,30 +71,15 @@ function findLatestTranscript() {
 	let latestMtime = 0;
 	for (const dir of dirs) {
 		const projectDir = join(projectsDir, dir);
-		let stat;
-		try {
-			stat = statSync(projectDir);
-		} catch {
-			continue;
-		}
-		if (!stat.isDirectory()) continue;
-		let files;
-		try {
-			files = readdirSync(projectDir);
-		} catch {
-			continue;
-		}
+		if (!safeStat(projectDir)?.isDirectory()) continue;
+		const files = safeReadDir(projectDir);
 		for (const file of files) {
 			if (!file.endsWith(".jsonl")) continue;
 			const filePath = join(projectDir, file);
-			try {
-				const mtime = statSync(filePath).mtimeMs;
-				if (mtime > latestMtime) {
-					latestMtime = mtime;
-					latestFile = filePath;
-				}
-			} catch {
-				continue;
+			const fileStat = safeStat(filePath);
+			if (fileStat && fileStat.mtimeMs > latestMtime) {
+				latestMtime = fileStat.mtimeMs;
+				latestFile = filePath;
 			}
 		}
 	}
@@ -76,18 +87,7 @@ function findLatestTranscript() {
 		debug("No transcript files found");
 		return null;
 	}
-	try {
-		const firstLine = readFileSync(latestFile, "utf8").split("\n")[0];
-		const sessionId = JSON.parse(firstLine).sessionId ?? latestFile.replace(/.*\//, "").replace(".jsonl", "");
-		debug(`Found transcript: ${latestFile}, session: ${sessionId}`);
-		return {
-			sessionId,
-			filePath: latestFile
-		};
-	} catch (e) {
-		debug(`Error reading transcript ${latestFile}: ${e}`);
-		return null;
-	}
+	return extractSessionId(latestFile);
 }
 
 //#endregion
@@ -200,41 +200,69 @@ function groupTurns(messages) {
 }
 function matchToolResults(toolUseBlocks, toolResults) {
 	return toolUseBlocks.map((block) => {
-		let output = null;
-		let timestamp;
-		for (const tr of toolResults) {
-			const trContent = getContent(tr);
-			if (!Array.isArray(trContent)) continue;
-			for (const item of trContent) if (isToolResultBlock(item) && item.tool_use_id === block.id) {
-				output = item.content;
-				timestamp = getTimestamp(tr);
-				break;
-			}
-			if (output !== null) break;
-		}
+		const match = toolResults.filter((tr) => Array.isArray(getContent(tr))).find((tr) => getContent(tr).some((item) => isToolResultBlock(item) && item.tool_use_id === block.id));
+		const matchedItem = match ? getContent(match).find((item) => isToolResultBlock(item) && item.tool_use_id === block.id) : void 0;
 		return {
 			id: block.id,
 			name: block.name,
 			input: block.input,
-			output,
-			timestamp
+			output: matchedItem?.content ?? null,
+			timestamp: match ? getTimestamp(match) : void 0
 		};
 	});
 }
 
 //#endregion
 //#region src/tracer.ts
-async function createTrace(sessionId, turnNum, turn) {
-	const userText = getTextContent(turn.user);
-	const lastAssistantText = turn.assistants.length > 0 ? getTextContent(turn.assistants[turn.assistants.length - 1]) : "";
-	const model = turn.assistants[0]?.message?.model ?? "claude";
-	const traceStart = getTimestamp(turn.user);
-	const traceEnd = [...turn.assistants, ...turn.toolResults].reduce((latest, msg) => {
+function computeTraceEnd(messages) {
+	return messages.reduce((latest, msg) => {
 		const ts = getTimestamp(msg);
 		if (!ts) return latest;
 		if (!latest || ts > latest) return ts;
 		return latest;
 	}, void 0);
+}
+function createGenerationObservation(assistant, index, turn, model, userText, genEnd) {
+	const assistantText = getTextContent(assistant);
+	const assistantModel = assistant.message?.model ?? model;
+	const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
+	const genStart = getTimestamp(assistant);
+	const generation = startObservation(assistantModel, {
+		model: assistantModel,
+		...index === 0 && { input: {
+			role: "user",
+			content: userText
+		} },
+		output: {
+			role: "assistant",
+			content: assistantText
+		},
+		metadata: { tool_count: toolCalls.length }
+	}, {
+		asType: "generation",
+		...genStart && { startTime: genStart }
+	});
+	for (const toolCall of toolCalls) {
+		generation.startObservation(`Tool: ${toolCall.name}`, {
+			input: toolCall.input,
+			metadata: {
+				tool_name: toolCall.name,
+				tool_id: toolCall.id
+			}
+		}, {
+			asType: "tool",
+			...genStart && { startTime: genStart }
+		}).update({ output: toolCall.output }).end(toolCall.timestamp);
+		debug(`Created tool observation for: ${toolCall.name}`);
+	}
+	generation.end(genEnd);
+}
+async function createTrace(sessionId, turnNum, turn) {
+	const userText = getTextContent(turn.user);
+	const lastAssistantText = turn.assistants.length > 0 ? getTextContent(turn.assistants[turn.assistants.length - 1]) : "";
+	const model = turn.assistants[0]?.message?.model ?? "claude";
+	const traceStart = getTimestamp(turn.user);
+	const traceEnd = computeTraceEnd([...turn.assistants, ...turn.toolResults]);
 	const hasTraceStart = traceStart !== void 0;
 	await startActiveObservation(`Turn ${turnNum}`, async (span) => {
 		updateActiveTrace({
@@ -254,41 +282,8 @@ async function createTrace(sessionId, turnNum, turn) {
 			}
 		});
 		for (let i = 0; i < turn.assistants.length; i++) {
-			const assistant = turn.assistants[i];
-			const assistantText = getTextContent(assistant);
-			const assistantModel = assistant.message?.model ?? model;
-			const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
-			const genStart = getTimestamp(assistant);
-			const genEnd = (i + 1 < turn.assistants.length ? getTimestamp(turn.assistants[i + 1]) : void 0) ?? traceEnd;
-			const generation = startObservation(assistantModel, {
-				model: assistantModel,
-				...i === 0 && { input: {
-					role: "user",
-					content: userText
-				} },
-				output: {
-					role: "assistant",
-					content: assistantText
-				},
-				metadata: { tool_count: toolCalls.length }
-			}, {
-				asType: "generation",
-				...genStart && { startTime: genStart }
-			});
-			for (const toolCall of toolCalls) {
-				generation.startObservation(`Tool: ${toolCall.name}`, {
-					input: toolCall.input,
-					metadata: {
-						tool_name: toolCall.name,
-						tool_id: toolCall.id
-					}
-				}, {
-					asType: "tool",
-					...genStart && { startTime: genStart }
-				}).update({ output: toolCall.output }).end(toolCall.timestamp);
-				debug(`Created tool observation for: ${toolCall.name}`);
-			}
-			generation.end(genEnd);
+			const nextGenStart = i + 1 < turn.assistants.length ? getTimestamp(turn.assistants[i + 1]) : void 0;
+			createGenerationObservation(turn.assistants[i], i, turn, model, userText, nextGenStart ?? traceEnd);
 		}
 		if (traceEnd) span.end(traceEnd);
 	}, { ...hasTraceStart && {

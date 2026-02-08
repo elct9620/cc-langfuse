@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readdirSync,
   statSync,
+  type Stats,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
@@ -31,16 +32,47 @@ export function saveState(state: State): void {
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
+function safeReadDir(path: string): string[] {
+  try {
+    return readdirSync(path);
+  } catch {
+    return [];
+  }
+}
+
+function safeStat(path: string): Stats | null {
+  try {
+    return statSync(path);
+  } catch {
+    return null;
+  }
+}
+
+function extractSessionId(filePath: string): {
+  sessionId: string;
+  filePath: string;
+} | null {
+  try {
+    const firstLine = readFileSync(filePath, "utf8").split("\n")[0];
+    const firstMsg = JSON.parse(firstLine);
+    const sessionId =
+      firstMsg.sessionId ?? filePath.replace(/.*\//, "").replace(".jsonl", "");
+    debug(`Found transcript: ${filePath}, session: ${sessionId}`);
+    return { sessionId, filePath };
+  } catch (e) {
+    debug(`Error reading transcript ${filePath}: ${e}`);
+    return null;
+  }
+}
+
 export function findLatestTranscript(): {
   sessionId: string;
   filePath: string;
 } | null {
   const projectsDir = join(homedir(), ".claude", "projects");
 
-  let dirs: string[];
-  try {
-    dirs = readdirSync(projectsDir);
-  } catch {
+  const dirs = safeReadDir(projectsDir);
+  if (dirs.length === 0) {
     debug(`Projects directory not found: ${projectsDir}`);
     return null;
   }
@@ -50,32 +82,17 @@ export function findLatestTranscript(): {
 
   for (const dir of dirs) {
     const projectDir = join(projectsDir, dir);
-    let stat;
-    try {
-      stat = statSync(projectDir);
-    } catch {
-      continue;
-    }
-    if (!stat.isDirectory()) continue;
+    const stat = safeStat(projectDir);
+    if (!stat?.isDirectory()) continue;
 
-    let files: string[];
-    try {
-      files = readdirSync(projectDir);
-    } catch {
-      continue;
-    }
-
+    const files = safeReadDir(projectDir);
     for (const file of files) {
       if (!file.endsWith(".jsonl")) continue;
       const filePath = join(projectDir, file);
-      try {
-        const mtime = statSync(filePath).mtimeMs;
-        if (mtime > latestMtime) {
-          latestMtime = mtime;
-          latestFile = filePath;
-        }
-      } catch {
-        continue;
+      const fileStat = safeStat(filePath);
+      if (fileStat && fileStat.mtimeMs > latestMtime) {
+        latestMtime = fileStat.mtimeMs;
+        latestFile = filePath;
       }
     }
   }
@@ -85,15 +102,5 @@ export function findLatestTranscript(): {
     return null;
   }
 
-  try {
-    const firstLine = readFileSync(latestFile, "utf8").split("\n")[0];
-    const firstMsg = JSON.parse(firstLine);
-    const sessionId =
-      firstMsg.sessionId ?? latestFile.replace(/.*\//, "").replace(".jsonl", "");
-    debug(`Found transcript: ${latestFile}, session: ${sessionId}`);
-    return { sessionId, filePath: latestFile };
-  } catch (e) {
-    debug(`Error reading transcript ${latestFile}: ${e}`);
-    return null;
-  }
+  return extractSessionId(latestFile);
 }

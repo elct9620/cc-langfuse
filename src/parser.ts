@@ -195,26 +195,27 @@ export function matchToolResults(
   toolResults: Message[],
 ): ToolCall[] {
   return toolUseBlocks.map((block) => {
-    let output: unknown = null;
-    let timestamp: Date | undefined;
-    for (const tr of toolResults) {
-      const trContent = getContent(tr);
-      if (!Array.isArray(trContent)) continue;
-      for (const item of trContent) {
-        if (isToolResultBlock(item) && item.tool_use_id === block.id) {
-          output = item.content;
-          timestamp = getTimestamp(tr);
-          break;
-        }
-      }
-      if (output !== null) break;
-    }
+    const match = toolResults
+      .filter((tr) => Array.isArray(getContent(tr)))
+      .find((tr) =>
+        (getContent(tr) as unknown[]).some(
+          (item) => isToolResultBlock(item) && item.tool_use_id === block.id,
+        ),
+      );
+
+    const matchedItem = match
+      ? (getContent(match) as unknown[]).find(
+          (item): item is ToolResultBlock =>
+            isToolResultBlock(item) && item.tool_use_id === block.id,
+        )
+      : undefined;
+
     return {
       id: block.id,
       name: block.name,
       input: block.input,
-      output,
-      timestamp,
+      output: matchedItem?.content ?? null,
+      timestamp: match ? getTimestamp(match) : undefined,
     };
   });
 }

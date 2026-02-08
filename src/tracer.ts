@@ -16,6 +16,63 @@ import {
 import type { Turn } from "./parser.js";
 import type { State } from "./filesystem.js";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Message = Record<string, any>;
+
+function computeTraceEnd(messages: Message[]): Date | undefined {
+  return messages.reduce<Date | undefined>((latest, msg) => {
+    const ts = getTimestamp(msg);
+    if (!ts) return latest;
+    if (!latest || ts > latest) return ts;
+    return latest;
+  }, undefined);
+}
+
+function createGenerationObservation(
+  assistant: Message,
+  index: number,
+  turn: Turn,
+  model: string,
+  userText: string,
+  genEnd: Date | undefined,
+): void {
+  const assistantText = getTextContent(assistant);
+  const assistantModel = assistant.message?.model ?? model;
+  const toolUseBlocks = getToolCalls(assistant);
+  const toolCalls = matchToolResults(toolUseBlocks, turn.toolResults);
+
+  const genStart = getTimestamp(assistant);
+
+  const generation = startObservation(
+    assistantModel,
+    {
+      model: assistantModel,
+      ...(index === 0 && { input: { role: "user", content: userText } }),
+      output: { role: "assistant", content: assistantText },
+      metadata: { tool_count: toolCalls.length },
+    },
+    { asType: "generation", ...(genStart && { startTime: genStart }) },
+  );
+
+  for (const toolCall of toolCalls) {
+    const tool = generation.startObservation(
+      `Tool: ${toolCall.name}`,
+      {
+        input: toolCall.input,
+        metadata: {
+          tool_name: toolCall.name,
+          tool_id: toolCall.id,
+        },
+      },
+      { asType: "tool", ...(genStart && { startTime: genStart }) },
+    );
+    tool.update({ output: toolCall.output }).end(toolCall.timestamp);
+    debug(`Created tool observation for: ${toolCall.name}`);
+  }
+
+  generation.end(genEnd);
+}
+
 async function createTrace(
   sessionId: string,
   turnNum: number,
@@ -29,16 +86,7 @@ async function createTrace(
   const model = turn.assistants[0]?.message?.model ?? "claude";
 
   const traceStart = getTimestamp(turn.user);
-
-  // Compute traceEnd: latest timestamp across all assistants and toolResults
-  const allMessages = [...turn.assistants, ...turn.toolResults];
-  const traceEnd = allMessages.reduce<Date | undefined>((latest, msg) => {
-    const ts = getTimestamp(msg);
-    if (!ts) return latest;
-    if (!latest || ts > latest) return ts;
-    return latest;
-  }, undefined);
-
+  const traceEnd = computeTraceEnd([...turn.assistants, ...turn.toolResults]);
   const hasTraceStart = traceStart !== undefined;
 
   await startActiveObservation(
@@ -56,47 +104,19 @@ async function createTrace(
       });
 
       for (let i = 0; i < turn.assistants.length; i++) {
-        const assistant = turn.assistants[i];
-        const assistantText = getTextContent(assistant);
-        const assistantModel = assistant.message?.model ?? model;
-        const toolUseBlocks = getToolCalls(assistant);
-        const toolCalls = matchToolResults(toolUseBlocks, turn.toolResults);
-
-        const genStart = getTimestamp(assistant);
         const nextGenStart =
           i + 1 < turn.assistants.length
             ? getTimestamp(turn.assistants[i + 1])
             : undefined;
-        const genEnd = nextGenStart ?? traceEnd;
 
-        const generation = startObservation(
-          assistantModel,
-          {
-            model: assistantModel,
-            ...(i === 0 && { input: { role: "user", content: userText } }),
-            output: { role: "assistant", content: assistantText },
-            metadata: { tool_count: toolCalls.length },
-          },
-          { asType: "generation", ...(genStart && { startTime: genStart }) },
+        createGenerationObservation(
+          turn.assistants[i],
+          i,
+          turn,
+          model,
+          userText,
+          nextGenStart ?? traceEnd,
         );
-
-        for (const toolCall of toolCalls) {
-          const tool = generation.startObservation(
-            `Tool: ${toolCall.name}`,
-            {
-              input: toolCall.input,
-              metadata: {
-                tool_name: toolCall.name,
-                tool_id: toolCall.id,
-              },
-            },
-            { asType: "tool", ...(genStart && { startTime: genStart }) },
-          );
-          tool.update({ output: toolCall.output }).end(toolCall.timestamp);
-          debug(`Created tool observation for: ${toolCall.name}`);
-        }
-
-        generation.end(genEnd);
       }
 
       if (traceEnd) {
