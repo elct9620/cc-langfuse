@@ -20,7 +20,7 @@ A Node.js CLI hook tool that sends Claude Code session data to Langfuse, enablin
 
 ## Success Criteria
 
-- Claude Code's `Stop` hook triggers `pnpm dlx github:elct9620/cc-langfuse hook`, sending session data to Langfuse.
+- Claude Code's `Stop` hook triggers `pnpm dlx github:elct9620/cc-langfuse`, sending session data to Langfuse.
 - No local script files are installed; all execution happens via `pnpm dlx`.
 - Traces appear in Langfuse with session, turn, generation, and tool span structure.
 
@@ -42,7 +42,7 @@ Users manually configure the hook and credentials.
         "hooks": [
           {
             "type": "command",
-            "command": "pnpm dlx github:elct9620/cc-langfuse hook"
+            "command": "pnpm dlx github:elct9620/cc-langfuse"
           }
         ]
       }
@@ -66,7 +66,7 @@ Tracing is opt-in per project. Users add this to the project's `.claude/settings
 }
 ```
 
-### Hook Subcommand (`hook`)
+### Hook Behavior
 
 Triggered by Claude Code after each assistant response via `pnpm dlx`.
 
@@ -107,6 +107,7 @@ Exits immediately if `TRACE_TO_LANGFUSE` is not `"true"`.
 | --------------- | ----------------------------------------- | ----------------------------------------------------------------- |
 | Hook type       | `Stop` only                               | Matches official integration; transcript is complete at stop time |
 | Execution model | Always via `pnpm dlx`                     | No local install required; version pinning via git ref            |
+| Language        | TypeScript (compiled to JavaScript)       | Type safety; compiled to ES Modules for runtime                   |
 | Runtime         | Node.js (ES Modules)                      | Matches project ecosystem; available where Claude Code runs       |
 | Langfuse SDK    | `langfuse` npm package                    | Declared as dependency, resolved by `pnpm dlx`                    |
 | State file      | `~/.claude/state/cc-langfuse_state.json`  | Follows Claude Code convention for state storage                  |
