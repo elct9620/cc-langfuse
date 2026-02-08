@@ -87,8 +87,9 @@ Exits immediately if `TRACE_TO_LANGFUSE` is not `"true"`.
 ```
 Session (Session ID)
 └── Trace: "Turn N"
-    └── Generation: "{model}"          (asType: "generation")
-        └── Tool: "Tool: {name}"       (asType: "tool")
+    └── Root Span: "Turn N"            (asType: "agent")
+        └── Generation: "{model}"      (asType: "generation")
+            └── Tool: "Tool: {name}"   (asType: "tool")
 ```
 
 Each level carries the following data:
@@ -96,13 +97,28 @@ Each level carries the following data:
 | Level      | input                                | output                             |
 | ---------- | ------------------------------------ | ---------------------------------- |
 | Trace      | User message                         | Last Generation's assistant text   |
+| Root Span  | User message                         | Last Generation's assistant text   |
 | Generation | User message (first Generation only) | Assistant text for that invocation |
 | Tool       | Tool call arguments                  | Tool execution result              |
 
 - **Session** — Groups all turns by the transcript's session ID, corresponding to one Claude Code conversation
 - **Trace** — One Turn (a user → assistant exchange), named `Turn N`. `output` is the final response the user sees.
+- **Root Span** (`asType: "agent"`) — The root observation of each turn, typed as `"agent"` to represent a Claude Code agent interaction. Carries the same `input`/`output` as its parent Trace.
 - **Generation** (`asType: "generation"`) — One model invocation, named after the model. A single Turn may contain multiple Generations when the model calls tools and responds again. Only the first Generation carries `input` (the user's message). Subsequent Generations omit `input`; their context (tool results) is already captured in the preceding Generation's Tool observations.
 - **Tool** (`asType: "tool"`) — One tool execution, named `Tool: {name}`; parented under the Generation that initiated the tool call
+
+#### Usage and Cost
+
+Each Generation observation includes token usage when available in the JSONL transcript:
+
+| Field          | Key                       | Description                   |
+| -------------- | ------------------------- | ----------------------------- |
+| `usageDetails` | `input`                   | Number of input tokens        |
+| `usageDetails` | `output`                  | Number of output tokens       |
+| `usageDetails` | `total`                   | Total tokens (input + output) |
+| `usageDetails` | `cache_read_input_tokens` | Cached input tokens           |
+
+Cost is not set explicitly; Langfuse derives cost automatically from the model registry when `usageDetails` and `model` are provided.
 
 #### Timing
 
@@ -145,6 +161,7 @@ If a message lacks a `timestamp` field, timing for that observation is omitted (
 | Term       | Definition                                                                                                     |
 | ---------- | -------------------------------------------------------------------------------------------------------------- |
 | Turn       | One user message followed by all assistant responses and tool invocations until the next user message          |
+| Root Span  | The root observation of each turn (`asType: "agent"`); represents the agent interaction boundary               |
 | Generation | One model invocation and its response (`asType: "generation"`); a single Turn may contain multiple Generations |
 | Tool       | One tool execution observation (`asType: "tool"`); parented under the Generation that invoked it               |
 | Transcript | The `.jsonl` file Claude Code writes for each session in `~/.claude/projects/`                                 |
