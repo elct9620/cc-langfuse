@@ -16,6 +16,7 @@ export const LOG_FILE = join(
 );
 export const DEBUG =
   (process.env.CC_LANGFUSE_DEBUG ?? "").toLowerCase() === "true";
+export const HOOK_WARNING_THRESHOLD_SECONDS = 180;
 
 export function log(level: string, message: string): void {
   mkdirSync(dirname(LOG_FILE), { recursive: true });

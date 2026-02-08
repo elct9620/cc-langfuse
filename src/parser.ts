@@ -1,6 +1,57 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Message = Record<string, any>;
 
+export interface TextBlock {
+  type: "text";
+  text: string;
+}
+
+export interface ToolUseBlock {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: unknown;
+}
+
+export interface ToolResultBlock {
+  type: "tool_result";
+  tool_use_id: string;
+  content: unknown;
+}
+
+export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+
+export function isTextBlock(item: unknown): item is TextBlock {
+  return (
+    typeof item === "object" &&
+    item !== null &&
+    (item as Message).type === "text"
+  );
+}
+
+export function isToolUseBlock(item: unknown): item is ToolUseBlock {
+  return (
+    typeof item === "object" &&
+    item !== null &&
+    (item as Message).type === "tool_use"
+  );
+}
+
+export function isToolResultBlock(item: unknown): item is ToolResultBlock {
+  return (
+    typeof item === "object" &&
+    item !== null &&
+    (item as Message).type === "tool_result"
+  );
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  input: unknown;
+  output: unknown;
+}
+
 export interface Turn {
   user: Message;
   assistants: Message[];
@@ -19,23 +70,13 @@ export function getContent(msg: unknown): unknown {
 export function isToolResult(msg: Message): boolean {
   const content = getContent(msg);
   if (!Array.isArray(content)) return false;
-  return content.some(
-    (item: unknown) =>
-      typeof item === "object" &&
-      item !== null &&
-      (item as Message).type === "tool_result",
-  );
+  return content.some(isToolResultBlock);
 }
 
-export function getToolCalls(msg: Message): Message[] {
+export function getToolCalls(msg: Message): ToolUseBlock[] {
   const content = getContent(msg);
   if (!Array.isArray(content)) return [];
-  return content.filter(
-    (item: unknown) =>
-      typeof item === "object" &&
-      item !== null &&
-      (item as Message).type === "tool_use",
-  );
+  return content.filter(isToolUseBlock);
 }
 
 export function getTextContent(msg: Message): string {
@@ -44,8 +85,8 @@ export function getTextContent(msg: Message): string {
   if (!Array.isArray(content)) return "";
   const parts: string[] = [];
   for (const item of content) {
-    if (typeof item === "object" && item !== null && item.type === "text") {
-      parts.push(item.text ?? "");
+    if (isTextBlock(item)) {
+      parts.push(item.text);
     } else if (typeof item === "string") {
       parts.push(item);
     }
@@ -140,4 +181,25 @@ export function groupTurns(messages: Message[]): Turn[] {
   finalizeTurn();
 
   return turns;
+}
+
+export function matchToolResults(
+  toolUseBlocks: ToolUseBlock[],
+  toolResults: Message[],
+): ToolCall[] {
+  return toolUseBlocks.map((block) => {
+    let output: unknown = null;
+    for (const tr of toolResults) {
+      const trContent = getContent(tr);
+      if (!Array.isArray(trContent)) continue;
+      for (const item of trContent) {
+        if (isToolResultBlock(item) && item.tool_use_id === block.id) {
+          output = item.content;
+          break;
+        }
+      }
+      if (output !== null) break;
+    }
+    return { id: block.id, name: block.name, input: block.input, output };
+  });
 }

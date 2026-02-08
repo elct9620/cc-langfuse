@@ -6,8 +6,9 @@ import {
   getTextContent,
   mergeAssistantParts,
   groupTurns,
+  matchToolResults,
 } from "../src/parser.js";
-import type { Turn } from "../src/parser.js";
+import type { Turn, ToolUseBlock } from "../src/parser.js";
 
 describe("getContent", () => {
   it("extracts content from a message with nested message field", () => {
@@ -246,5 +247,48 @@ describe("groupTurns", () => {
   it("returns empty array for only user message without assistant", () => {
     const messages = [{ type: "user", content: "hi" }];
     expect(groupTurns(messages)).toEqual([]);
+  });
+});
+
+describe("matchToolResults", () => {
+  it("matches tool results to tool use blocks by id", () => {
+    const toolUseBlocks: ToolUseBlock[] = [
+      { type: "tool_use", id: "t1", name: "Read", input: { path: "/a" } },
+      { type: "tool_use", id: "t2", name: "Write", input: { path: "/b" } },
+    ];
+    const toolResults = [
+      {
+        type: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "file data" },
+          { type: "tool_result", tool_use_id: "t2", content: "ok" },
+        ],
+      },
+    ];
+
+    const calls = matchToolResults(toolUseBlocks, toolResults);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      id: "t1",
+      name: "Read",
+      input: { path: "/a" },
+      output: "file data",
+    });
+    expect(calls[1]).toEqual({
+      id: "t2",
+      name: "Write",
+      input: { path: "/b" },
+      output: "ok",
+    });
+  });
+
+  it("returns null output when tool result is missing", () => {
+    const toolUseBlocks: ToolUseBlock[] = [
+      { type: "tool_use", id: "t1", name: "Read", input: {} },
+    ];
+
+    const calls = matchToolResults(toolUseBlocks, []);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].output).toBeNull();
   });
 });

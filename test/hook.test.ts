@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   mkdirSync,
   writeFileSync,
-  readFileSync,
   rmSync,
   existsSync,
 } from "node:fs";
@@ -44,9 +43,8 @@ vi.mock("langfuse", () => ({
 
 // Import after mocks
 const { hook } = await import("../src/index.js");
-const { processTranscript, loadState, saveState } = await import(
-  "../src/tracer.js"
-);
+const { processTranscript } = await import("../src/tracer.js");
+const { loadState, saveState } = await import("../src/filesystem.js");
 const { Langfuse } = await import("langfuse");
 
 function setupTranscript(lines: object[]): string {
@@ -154,9 +152,9 @@ describe("processTranscript", () => {
 
     const langfuse = createMockLangfuse();
     const state = {};
-    const turns = processTranscript(langfuse, "sess1", filePath, state);
+    const result = processTranscript(langfuse, "sess1", filePath, state);
 
-    expect(turns).toBe(2);
+    expect(result.turns).toBe(2);
     expect(mockTrace).toHaveBeenCalledTimes(2);
   });
 
@@ -226,15 +224,15 @@ describe("processTranscript", () => {
 
     const langfuse = createMockLangfuse();
     const state = { sess1: { last_line: 2, turn_count: 1, updated: "" } };
-    const turns = processTranscript(langfuse, "sess1", filePath, state);
+    const result = processTranscript(langfuse, "sess1", filePath, state);
 
-    expect(turns).toBe(1);
+    expect(result.turns).toBe(1);
     expect(mockTrace).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Turn 2" }),
     );
   });
 
-  it("saves state after processing", () => {
+  it("returns updated state after processing", () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hi" },
       {
@@ -248,17 +246,10 @@ describe("processTranscript", () => {
 
     const langfuse = createMockLangfuse();
     const state = {};
-    processTranscript(langfuse, "sess1", filePath, state);
+    const result = processTranscript(langfuse, "sess1", filePath, state);
 
-    const stateFile = join(
-      testDir,
-      ".claude",
-      "state",
-      "cc-langfuse_state.json",
-    );
-    const saved = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(saved.sess1.last_line).toBe(2);
-    expect(saved.sess1.turn_count).toBe(1);
+    expect(result.updatedState.sess1.last_line).toBe(2);
+    expect(result.updatedState.sess1.turn_count).toBe(1);
   });
 });
 
