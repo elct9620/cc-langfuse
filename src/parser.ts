@@ -146,32 +146,35 @@ export function groupTurns(messages: Message[]): GroupTurnsResult {
   return new TurnBuilder().build(messages);
 }
 
+function findToolResultBlock(
+  toolResults: Message[],
+  toolUseId: string,
+): { block: ToolResultBlock; message: Message } | undefined {
+  for (const msg of toolResults) {
+    const content = getContent(msg);
+    if (!Array.isArray(content)) continue;
+    const block = content.find(
+      (item): item is ToolResultBlock =>
+        isToolResultBlock(item) && item.tool_use_id === toolUseId,
+    );
+    if (block) return { block, message: msg };
+  }
+  return undefined;
+}
+
 export function matchToolResults(
   toolUseBlocks: ToolUseBlock[],
   toolResults: Message[],
 ): ToolCall[] {
   return toolUseBlocks.map((block) => {
-    const match = toolResults
-      .filter((tr) => Array.isArray(getContent(tr)))
-      .find((tr) =>
-        (getContent(tr) as unknown[]).some(
-          (item) => isToolResultBlock(item) && item.tool_use_id === block.id,
-        ),
-      );
-
-    const matchedItem = match
-      ? (getContent(match) as unknown[]).find(
-          (item): item is ToolResultBlock =>
-            isToolResultBlock(item) && item.tool_use_id === block.id,
-        )
-      : undefined;
+    const match = findToolResultBlock(toolResults, block.id);
 
     return {
       id: block.id,
       name: block.name,
       input: block.input,
-      output: matchedItem?.content ?? null,
-      timestamp: match ? getTimestamp(match) : undefined,
+      output: match?.block.content ?? null,
+      timestamp: match ? getTimestamp(match.message) : undefined,
     };
   });
 }
