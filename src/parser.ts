@@ -59,82 +59,91 @@ export function mergeAssistantParts(parts: Message[]): Message {
   return result;
 }
 
-export function groupTurns(messages: Message[]): GroupTurnsResult {
-  const turns: Turn[] = [];
+class TurnBuilder {
+  private turns: Turn[] = [];
+  private currentUser: Message | null = null;
+  private currentAssistants: Message[] = [];
+  private currentParts: Message[] = [];
+  private currentMsgId: string | null = null;
+  private currentToolResults: Message[] = [];
+  private lastCompleteTurnEnd = 0;
 
-  let currentUser: Message | null = null;
-  let currentAssistants: Message[] = [];
-  let currentParts: Message[] = [];
-  let currentMsgId: string | null = null;
-  let currentToolResults: Message[] = [];
-  let lastCompleteTurnEnd = 0;
-
-  function finalizeParts(): void {
-    if (currentMsgId !== null && currentParts.length > 0) {
-      currentAssistants.push(mergeAssistantParts(currentParts));
-      currentParts = [];
-      currentMsgId = null;
-    }
-  }
-
-  function finalizeTurn(nextIdx: number): void {
-    finalizeParts();
-    if (currentUser !== null && currentAssistants.length > 0) {
-      turns.push({
-        user: currentUser,
-        assistants: currentAssistants,
-        toolResults: currentToolResults,
-      });
-      lastCompleteTurnEnd = nextIdx;
-    }
-  }
-
-  let idx = 0;
-  for (const msg of messages) {
-    if (msg.isMeta === true) {
-      idx++;
-      continue;
-    }
-
-    const role =
-      msg.type ?? (msg.message as Message | undefined)?.role ?? undefined;
-
-    if (role === "user") {
-      if (isToolResult(msg)) {
-        currentToolResults.push(msg);
+  build(messages: Message[]): GroupTurnsResult {
+    let idx = 0;
+    for (const msg of messages) {
+      if (msg.isMeta === true) {
         idx++;
         continue;
       }
 
-      // New user message — finalize previous turn
-      finalizeTurn(idx);
+      const role =
+        msg.type ?? (msg.message as Message | undefined)?.role ?? undefined;
 
-      currentUser = msg;
-      currentAssistants = [];
-      currentParts = [];
-      currentMsgId = null;
-      currentToolResults = [];
-    } else if (role === "assistant") {
-      const msgId: string | undefined = msg.message?.id;
-
-      if (!msgId) {
-        currentParts.push(msg);
-      } else if (msgId === currentMsgId) {
-        currentParts.push(msg);
-      } else {
-        finalizeParts();
-        currentMsgId = msgId;
-        currentParts = [msg];
+      if (role === "user") {
+        this.handleUser(msg, idx);
+      } else if (role === "assistant") {
+        this.handleAssistant(msg);
       }
+
+      idx++;
     }
 
-    idx++;
+    this.finalizeTurn(messages.length);
+    return { turns: this.turns, consumed: this.lastCompleteTurnEnd };
   }
 
-  // Process final turn
-  finalizeTurn(messages.length);
+  private handleUser(msg: Message, idx: number): void {
+    if (isToolResult(msg)) {
+      this.currentToolResults.push(msg);
+      return;
+    }
 
-  return { turns, consumed: lastCompleteTurnEnd };
+    this.finalizeTurn(idx);
+
+    this.currentUser = msg;
+    this.currentAssistants = [];
+    this.currentParts = [];
+    this.currentMsgId = null;
+    this.currentToolResults = [];
+  }
+
+  private handleAssistant(msg: Message): void {
+    const msgId: string | undefined = msg.message?.id;
+
+    if (!msgId) {
+      this.currentParts.push(msg);
+    } else if (msgId === this.currentMsgId) {
+      this.currentParts.push(msg);
+    } else {
+      this.finalizeParts();
+      this.currentMsgId = msgId;
+      this.currentParts = [msg];
+    }
+  }
+
+  private finalizeParts(): void {
+    if (this.currentMsgId !== null && this.currentParts.length > 0) {
+      this.currentAssistants.push(mergeAssistantParts(this.currentParts));
+      this.currentParts = [];
+      this.currentMsgId = null;
+    }
+  }
+
+  private finalizeTurn(nextIdx: number): void {
+    this.finalizeParts();
+    if (this.currentUser !== null && this.currentAssistants.length > 0) {
+      this.turns.push({
+        user: this.currentUser,
+        assistants: this.currentAssistants,
+        toolResults: this.currentToolResults,
+      });
+      this.lastCompleteTurnEnd = nextIdx;
+    }
+  }
+}
+
+export function groupTurns(messages: Message[]): GroupTurnsResult {
+  return new TurnBuilder().build(messages);
 }
 
 export function matchToolResults(
