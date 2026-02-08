@@ -16,23 +16,32 @@ const mockObservationEnd = vi.fn();
 const mockObservationUpdate = vi
   .fn()
   .mockReturnValue({ end: mockObservationEnd });
-// Tool-level: Generation.startObservation() creates Tool observations
-const mockStartChildObservation = vi.fn();
-mockStartChildObservation.mockImplementation(() => ({
-  update: mockObservationUpdate,
-  end: mockObservationEnd,
-  startObservation: mockStartChildObservation,
-}));
-// Generation-level: RootSpan.startObservation() creates Generation observations
-const mockRootSpanStartObservation = vi.fn().mockImplementation(() => ({
-  end: mockObservationEnd,
-  startObservation: mockStartChildObservation,
-}));
-// Root Span-level: span.startObservation() creates the Root Span
-const mockSpanStartObservation = vi.fn().mockImplementation(() => ({
-  end: mockObservationEnd,
-  startObservation: mockRootSpanStartObservation,
-}));
+
+const mockSpanContext = {
+  traceId: "mock-trace-id",
+  spanId: "mock-span-id",
+  traceFlags: 1,
+};
+
+// Global startObservation mock — dispatches by asType
+const mockStartObservation = vi
+  .fn()
+  .mockImplementation((_name, _attrs, options) => {
+    const asType = options?.asType ?? "span";
+    if (asType === "tool") {
+      return {
+        update: mockObservationUpdate,
+        end: mockObservationEnd,
+        otelSpan: { spanContext: () => mockSpanContext },
+      };
+    }
+    // generation, agent, span all return the same shape
+    return {
+      end: mockObservationEnd,
+      otelSpan: { spanContext: () => mockSpanContext },
+    };
+  });
+
 const mockSpanEnd = vi.fn();
 const mockStartActiveObservation = vi
   .fn()
@@ -41,12 +50,12 @@ const mockStartActiveObservation = vi
       _name: string,
       callback: (span: {
         end: typeof mockSpanEnd;
-        startObservation: typeof mockSpanStartObservation;
+        otelSpan: { spanContext: () => typeof mockSpanContext };
       }) => Promise<void>,
     ) => {
       await callback({
         end: mockSpanEnd,
-        startObservation: mockSpanStartObservation,
+        otelSpan: { spanContext: () => mockSpanContext },
       });
     },
   );
@@ -59,6 +68,7 @@ const mockPropagateAttributes = vi
 
 vi.mock("@langfuse/tracing", () => ({
   startActiveObservation: mockStartActiveObservation,
+  startObservation: mockStartObservation,
   updateActiveTrace: mockUpdateActiveTrace,
   propagateAttributes: mockPropagateAttributes,
 }));
@@ -219,10 +229,10 @@ describe("hook", () => {
       expect.any(Function),
       {},
     );
-    expect(mockRootSpanStartObservation).toHaveBeenCalledWith(
+    expect(mockStartObservation).toHaveBeenCalledWith(
       "claude-sonnet-4-5-20250929",
       expect.objectContaining({ model: "claude-sonnet-4-5-20250929" }),
-      { asType: "generation" },
+      expect.objectContaining({ asType: "generation" }),
     );
     expect(mockForceFlush).toHaveBeenCalled();
     expect(mockSdkShutdown).toHaveBeenCalled();
@@ -304,12 +314,12 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    expect(mockStartChildObservation).toHaveBeenCalledWith(
+    expect(mockStartObservation).toHaveBeenCalledWith(
       "Tool: Read",
       expect.objectContaining({
         input: { path: "/test" },
       }),
-      { asType: "tool" },
+      expect.objectContaining({ asType: "tool" }),
     );
     expect(mockObservationUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ output: "file data" }),
@@ -352,22 +362,24 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    // Two generations in one turn
-    expect(mockRootSpanStartObservation).toHaveBeenCalledTimes(2);
+    // 1 root span (agent) + 2 generations + 1 tool = 4 calls
+    expect(mockStartObservation).toHaveBeenCalledTimes(4);
+
+    // Filter generation calls
+    const generationCalls = mockStartObservation.mock.calls.filter(
+      (call) => call[2]?.asType === "generation",
+    );
+    expect(generationCalls).toHaveLength(2);
 
     // First generation should have input with user message
-    expect(mockRootSpanStartObservation).toHaveBeenNthCalledWith(
-      1,
-      expect.any(String),
+    expect(generationCalls[0][1]).toEqual(
       expect.objectContaining({
         input: { role: "user", content: "do something" },
       }),
-      { asType: "generation" },
     );
 
     // Second generation should NOT have input
-    const secondCallArgs = mockRootSpanStartObservation.mock.calls[1][1];
-    expect(secondCallArgs).not.toHaveProperty("input");
+    expect(generationCalls[1][1]).not.toHaveProperty("input");
   });
 
   it("resumes from last processed line", async () => {
@@ -474,13 +486,13 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    expect(mockRootSpanStartObservation).toHaveBeenCalledWith(
+    expect(mockStartObservation).toHaveBeenCalledWith(
       "claude",
       expect.any(Object),
-      {
+      expect.objectContaining({
         asType: "generation",
         startTime: new Date("2025-01-15T10:00:05Z"),
-      },
+      }),
     );
   });
 
@@ -506,10 +518,8 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    // Generation end should be called with traceEnd (last message timestamp)
-    expect(mockObservationEnd).toHaveBeenCalledWith(
-      new Date("2025-01-15T10:00:05Z"),
-    );
+    // Last generation ends at current time (new Date())
+    expect(mockObservationEnd).toHaveBeenCalledWith(expect.any(Date));
   });
 
   it("should pass startTime and endTime to tool observation", async () => {
@@ -558,15 +568,15 @@ describe("processTranscript", () => {
     await processTranscript("sess1", filePath, state);
 
     // Tool should have genStart as startTime
-    expect(mockStartChildObservation).toHaveBeenCalledWith(
+    expect(mockStartObservation).toHaveBeenCalledWith(
       "Tool: Read",
       expect.objectContaining({
         input: { path: "/test" },
       }),
-      {
+      expect.objectContaining({
         asType: "tool",
         startTime: new Date("2025-01-15T10:00:05Z"),
-      },
+      }),
     );
 
     // Tool end should be called with tool_result timestamp
@@ -591,7 +601,7 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    expect(mockSpanStartObservation).toHaveBeenCalledWith(
+    expect(mockStartObservation).toHaveBeenCalledWith(
       "Turn 1",
       expect.objectContaining({
         input: { role: "user", content: "hello" },
@@ -623,7 +633,7 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    expect(mockSpanStartObservation).toHaveBeenCalledWith(
+    expect(mockStartObservation).toHaveBeenCalledWith(
       "Turn 1",
       expect.any(Object),
       expect.objectContaining({
@@ -654,7 +664,7 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    expect(mockRootSpanStartObservation).toHaveBeenCalledWith(
+    expect(mockStartObservation).toHaveBeenCalledWith(
       "claude",
       expect.objectContaining({
         usageDetails: {
@@ -684,8 +694,12 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    const callArgs = mockRootSpanStartObservation.mock.calls[0][1];
-    expect(callArgs).not.toHaveProperty("usageDetails");
+    // Find the generation call (skip root span agent call)
+    const generationCall = mockStartObservation.mock.calls.find(
+      (call) => call[2]?.asType === "generation",
+    );
+    expect(generationCall).toBeDefined();
+    expect(generationCall![1]).not.toHaveProperty("usageDetails");
   });
 
   it("should omit timing when messages lack timestamp", async () => {
@@ -712,14 +726,14 @@ describe("processTranscript", () => {
     );
 
     // No startTime in generation options
-    expect(mockRootSpanStartObservation).toHaveBeenCalledWith(
-      "claude",
-      expect.any(Object),
-      { asType: "generation" },
+    const generationCall = mockStartObservation.mock.calls.find(
+      (call) => call[2]?.asType === "generation",
     );
+    expect(generationCall).toBeDefined();
+    expect(generationCall![2]).not.toHaveProperty("startTime");
 
-    // generation.end() called with undefined (no endTime)
-    expect(mockObservationEnd).toHaveBeenCalledWith(undefined);
+    // Last generation ends at current time (new Date())
+    expect(mockObservationEnd).toHaveBeenCalledWith(expect.any(Date));
   });
 });
 

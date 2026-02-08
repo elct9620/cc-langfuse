@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import {
   startActiveObservation,
+  startObservation,
   updateActiveTrace,
   propagateAttributes,
 } from "@langfuse/tracing";
@@ -46,7 +47,9 @@ function createGenerationObservation(
   const genStart = getTimestamp(assistant);
   const usageDetails = getUsage(assistant);
 
-  const generation = parentObservation.startObservation(
+  // Use global startObservation() to work around SDK bug where
+  // instance method drops startTime from options
+  const generation = startObservation(
     assistantModel,
     {
       model: assistantModel,
@@ -55,11 +58,15 @@ function createGenerationObservation(
       metadata: { tool_count: toolCalls.length },
       ...(usageDetails && { usageDetails }),
     },
-    { asType: "generation", ...(genStart && { startTime: genStart }) },
+    {
+      asType: "generation",
+      ...(genStart && { startTime: genStart }),
+      parentSpanContext: parentObservation.otelSpan.spanContext(),
+    },
   );
 
   for (const toolCall of toolCalls) {
-    const tool = generation.startObservation(
+    const tool = startObservation(
       `Tool: ${toolCall.name}`,
       {
         input: toolCall.input,
@@ -68,7 +75,11 @@ function createGenerationObservation(
           tool_id: toolCall.id,
         },
       },
-      { asType: "tool", ...(genStart && { startTime: genStart }) },
+      {
+        asType: "tool",
+        ...(genStart && { startTime: genStart }),
+        parentSpanContext: generation.otelSpan.spanContext(),
+      },
     );
     tool.update({ output: toolCall.output }).end(toolCall.timestamp);
     debug(`Created tool observation for: ${toolCall.name}`);
@@ -107,7 +118,9 @@ async function createTrace(
         },
       });
 
-      const rootSpan = span.startObservation(
+      // Use global startObservation() to work around SDK bug where
+      // instance method drops startTime from options
+      const rootSpan = startObservation(
         `Turn ${turnNum}`,
         {
           input: { role: "user", content: userText },
@@ -116,6 +129,7 @@ async function createTrace(
         {
           asType: "agent",
           ...(hasTraceStart && { startTime: traceStart }),
+          parentSpanContext: span.otelSpan.spanContext(),
         },
       );
 
@@ -132,7 +146,7 @@ async function createTrace(
           turn,
           model,
           userText,
-          nextGenStart ?? traceEnd,
+          nextGenStart ?? new Date(),
         );
       }
 

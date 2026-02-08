@@ -3,7 +3,7 @@ import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { propagateAttributes, startActiveObservation, updateActiveTrace } from "@langfuse/tracing";
+import { propagateAttributes, startActiveObservation, startObservation, updateActiveTrace } from "@langfuse/tracing";
 
 //#region src/logger.ts
 const STATE_FILE = join(homedir(), ".claude", "state", "cc-langfuse_state.json");
@@ -238,7 +238,7 @@ function createGenerationObservation(parentObservation, assistant, index, turn, 
 	const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
 	const genStart = getTimestamp(assistant);
 	const usageDetails = getUsage(assistant);
-	const generation = parentObservation.startObservation(assistantModel, {
+	const generation = startObservation(assistantModel, {
 		model: assistantModel,
 		...index === 0 && { input: {
 			role: "user",
@@ -252,10 +252,11 @@ function createGenerationObservation(parentObservation, assistant, index, turn, 
 		...usageDetails && { usageDetails }
 	}, {
 		asType: "generation",
-		...genStart && { startTime: genStart }
+		...genStart && { startTime: genStart },
+		parentSpanContext: parentObservation.otelSpan.spanContext()
 	});
 	for (const toolCall of toolCalls) {
-		generation.startObservation(`Tool: ${toolCall.name}`, {
+		startObservation(`Tool: ${toolCall.name}`, {
 			input: toolCall.input,
 			metadata: {
 				tool_name: toolCall.name,
@@ -263,7 +264,8 @@ function createGenerationObservation(parentObservation, assistant, index, turn, 
 			}
 		}, {
 			asType: "tool",
-			...genStart && { startTime: genStart }
+			...genStart && { startTime: genStart },
+			parentSpanContext: generation.otelSpan.spanContext()
 		}).update({ output: toolCall.output }).end(toolCall.timestamp);
 		debug(`Created tool observation for: ${toolCall.name}`);
 	}
@@ -293,7 +295,7 @@ async function createTrace(sessionId, turnNum, turn) {
 				session_id: sessionId
 			}
 		});
-		const rootSpan = span.startObservation(`Turn ${turnNum}`, {
+		const rootSpan = startObservation(`Turn ${turnNum}`, {
 			input: {
 				role: "user",
 				content: userText
@@ -304,11 +306,12 @@ async function createTrace(sessionId, turnNum, turn) {
 			}
 		}, {
 			asType: "agent",
-			...hasTraceStart && { startTime: traceStart }
+			...hasTraceStart && { startTime: traceStart },
+			parentSpanContext: span.otelSpan.spanContext()
 		});
 		for (let i = 0; i < turn.assistants.length; i++) {
 			const nextGenStart = i + 1 < turn.assistants.length ? getTimestamp(turn.assistants[i + 1]) : void 0;
-			createGenerationObservation(rootSpan, turn.assistants[i], i, turn, model, userText, nextGenStart ?? traceEnd);
+			createGenerationObservation(rootSpan, turn.assistants[i], i, turn, model, userText, nextGenStart ?? /* @__PURE__ */ new Date());
 		}
 		if (traceEnd) {
 			rootSpan.end(traceEnd);
