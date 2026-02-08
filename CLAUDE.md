@@ -8,21 +8,31 @@ cc-langfuse is a Node.js CLI hook tool for Claude Code that parses `.jsonl` tran
 
 ## Commands
 
+- `pnpm build` — compile TypeScript to `dist/`
 - `pnpm test` — run all tests (vitest)
-- `pnpm test -- test/cli.test.js` — run a single test file
+- `pnpm test -- test/parser.test.ts` — run a single test file
 - `pnpm format` — format all files with prettier
 - `pnpm format:check` — check formatting without writing
 
 ## Architecture
 
-- **ES Modules only** (`"type": "module"` in package.json), plain JavaScript, no build step
-- **Entry point:** `bin/cli.js` — CLI executable registered via npm `bin` field
+- **TypeScript** source in `src/`, compiled to ES Modules in `dist/`
+- **Entry point:** `bin/cli.js` — plain JS shim that imports `dist/index.js` and calls `hook()`
 - **Runtime dependency:** Langfuse SDK (`langfuse`) for trace/span creation
 - **Package manager:** pnpm (enforced via `packageManager` field)
 
+### Source Modules
+
+| File | Responsibility |
+|------|----------------|
+| `src/logger.ts` | Constants (STATE_FILE, LOG_FILE, DEBUG) + file logging |
+| `src/parser.ts` | JSONL message parsing + turn grouping |
+| `src/tracer.ts` | Langfuse trace/generation/span creation + state management + transcript search |
+| `src/index.ts` | Main `hook()` entry point, orchestrates all modules |
+
 ### Hook Flow
 
-Triggered by Claude Code `Stop` hook via `pnpm dlx github:elct9620/cc-langfuse hook`:
+Triggered by Claude Code `Stop` hook via `pnpm dlx github:elct9620/cc-langfuse`:
 
 1. Check `TRACE_TO_LANGFUSE` env var; exit if not enabled
 2. Locate the most recently modified `.jsonl` transcript in `~/.claude/projects/`
