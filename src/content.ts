@@ -1,32 +1,32 @@
 import type {
+  ContentBlock,
   Message,
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
 } from "./types.js";
 
-export function isTextBlock(item: unknown): item is TextBlock {
+function isBlockOfType<T extends ContentBlock>(
+  item: unknown,
+  type: T["type"],
+): item is T {
   return (
     typeof item === "object" &&
     item !== null &&
-    (item as Message).type === "text"
+    (item as Record<string, unknown>).type === type
   );
+}
+
+export function isTextBlock(item: unknown): item is TextBlock {
+  return isBlockOfType<TextBlock>(item, "text");
 }
 
 export function isToolUseBlock(item: unknown): item is ToolUseBlock {
-  return (
-    typeof item === "object" &&
-    item !== null &&
-    (item as Message).type === "tool_use"
-  );
+  return isBlockOfType<ToolUseBlock>(item, "tool_use");
 }
 
 export function isToolResultBlock(item: unknown): item is ToolResultBlock {
-  return (
-    typeof item === "object" &&
-    item !== null &&
-    (item as Message).type === "tool_result"
-  );
+  return isBlockOfType<ToolResultBlock>(item, "tool_result");
 }
 
 export function getTimestamp(msg: Message): Date | undefined {
