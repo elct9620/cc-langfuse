@@ -15,8 +15,13 @@ Add the following to your Claude Code settings (`.claude/settings.json`):
   "hooks": {
     "Stop": [
       {
-        "type": "command",
-        "command": "pnpm dlx github:elct9620/cc-langfuse"
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm dlx github:elct9620/cc-langfuse"
+          }
+        ]
       }
     ]
   }
@@ -53,7 +58,7 @@ Add the following to `.claude/settings.local.json` (not checked into version con
 ### Trace Structure
 
 | Level      | Name           | Content                       |
-|------------|----------------|-------------------------------|
+| ---------- | -------------- | ----------------------------- |
 | Session    | Session ID     | Groups all turns in a session |
 | Trace      | `Turn N`       | One user-assistant exchange   |
 | Generation | Model name     | Assistant response content    |
