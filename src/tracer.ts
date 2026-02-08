@@ -36,6 +36,32 @@ function computeTraceEnd(messages: Message[]): Date | undefined {
   }, undefined);
 }
 
+function createToolObservations(
+  parentObservation: LangfuseObservation,
+  toolCalls: ReturnType<typeof matchToolResults>,
+  genStart: Date | undefined,
+): void {
+  for (const toolCall of toolCalls) {
+    const tool = startObservation(
+      `Tool: ${toolCall.name}`,
+      {
+        input: toolCall.input,
+        metadata: {
+          tool_name: toolCall.name,
+          tool_id: toolCall.id,
+        },
+      },
+      {
+        asType: "tool",
+        ...(genStart && { startTime: genStart }),
+        parentSpanContext: parentObservation.otelSpan.spanContext(),
+      },
+    );
+    tool.update({ output: toolCall.output }).end(toolCall.timestamp);
+    debug(`Created tool observation for: ${toolCall.name}`);
+  }
+}
+
 function createGenerationObservation(ctx: GenerationContext): void {
   const { parentObservation, assistant, index, turn, model, userText, genEnd } =
     ctx;
@@ -65,25 +91,7 @@ function createGenerationObservation(ctx: GenerationContext): void {
     },
   );
 
-  for (const toolCall of toolCalls) {
-    const tool = startObservation(
-      `Tool: ${toolCall.name}`,
-      {
-        input: toolCall.input,
-        metadata: {
-          tool_name: toolCall.name,
-          tool_id: toolCall.id,
-        },
-      },
-      {
-        asType: "tool",
-        ...(genStart && { startTime: genStart }),
-        parentSpanContext: generation.otelSpan.spanContext(),
-      },
-    );
-    tool.update({ output: toolCall.output }).end(toolCall.timestamp);
-    debug(`Created tool observation for: ${toolCall.name}`);
-  }
+  createToolObservations(generation, toolCalls, genStart);
 
   generation.end(genEnd);
 }
