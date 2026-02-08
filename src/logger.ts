@@ -12,7 +12,7 @@ export const LOG_FILE = join(
   homedir(),
   ".claude",
   "state",
-  "langfuse_hook.log",
+  "cc-langfuse_hook.log",
 );
 export const DEBUG =
   (process.env.CC_LANGFUSE_DEBUG ?? "").toLowerCase() === "true";

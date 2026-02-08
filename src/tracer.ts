@@ -184,7 +184,7 @@ function createTrace(
 
   // Create generation
   trace.generation({
-    name: "Claude Response",
+    name: model,
     model,
     input: { role: "user", content: userText },
     output: { role: "assistant", content: finalOutput },
