@@ -16,15 +16,22 @@ const mockObservationEnd = vi.fn();
 const mockObservationUpdate = vi
   .fn()
   .mockReturnValue({ end: mockObservationEnd });
+// Tool-level: Generation.startObservation() creates Tool observations
 const mockStartChildObservation = vi.fn();
 mockStartChildObservation.mockImplementation(() => ({
   update: mockObservationUpdate,
   end: mockObservationEnd,
   startObservation: mockStartChildObservation,
 }));
-const mockStartObservation = vi.fn().mockImplementation(() => ({
+// Generation-level: RootSpan.startObservation() creates Generation observations
+const mockRootSpanStartObservation = vi.fn().mockImplementation(() => ({
   end: mockObservationEnd,
   startObservation: mockStartChildObservation,
+}));
+// Root Span-level: span.startObservation() creates the Root Span
+const mockSpanStartObservation = vi.fn().mockImplementation(() => ({
+  end: mockObservationEnd,
+  startObservation: mockRootSpanStartObservation,
 }));
 const mockSpanEnd = vi.fn();
 const mockStartActiveObservation = vi
@@ -32,9 +39,15 @@ const mockStartActiveObservation = vi
   .mockImplementation(
     async (
       _name: string,
-      callback: (span: { end: typeof mockSpanEnd }) => Promise<void>,
+      callback: (span: {
+        end: typeof mockSpanEnd;
+        startObservation: typeof mockSpanStartObservation;
+      }) => Promise<void>,
     ) => {
-      await callback({ end: mockSpanEnd });
+      await callback({
+        end: mockSpanEnd,
+        startObservation: mockSpanStartObservation,
+      });
     },
   );
 const mockUpdateActiveTrace = vi.fn();
@@ -46,7 +59,6 @@ const mockPropagateAttributes = vi
 
 vi.mock("@langfuse/tracing", () => ({
   startActiveObservation: mockStartActiveObservation,
-  startObservation: mockStartObservation,
   updateActiveTrace: mockUpdateActiveTrace,
   propagateAttributes: mockPropagateAttributes,
 }));
@@ -207,7 +219,7 @@ describe("hook", () => {
       expect.any(Function),
       {},
     );
-    expect(mockStartObservation).toHaveBeenCalledWith(
+    expect(mockRootSpanStartObservation).toHaveBeenCalledWith(
       "claude-sonnet-4-5-20250929",
       expect.objectContaining({ model: "claude-sonnet-4-5-20250929" }),
       { asType: "generation" },
@@ -341,10 +353,10 @@ describe("processTranscript", () => {
     await processTranscript("sess1", filePath, state);
 
     // Two generations in one turn
-    expect(mockStartObservation).toHaveBeenCalledTimes(2);
+    expect(mockRootSpanStartObservation).toHaveBeenCalledTimes(2);
 
     // First generation should have input with user message
-    expect(mockStartObservation).toHaveBeenNthCalledWith(
+    expect(mockRootSpanStartObservation).toHaveBeenNthCalledWith(
       1,
       expect.any(String),
       expect.objectContaining({
@@ -354,7 +366,7 @@ describe("processTranscript", () => {
     );
 
     // Second generation should NOT have input
-    const secondCallArgs = mockStartObservation.mock.calls[1][1];
+    const secondCallArgs = mockRootSpanStartObservation.mock.calls[1][1];
     expect(secondCallArgs).not.toHaveProperty("input");
   });
 
@@ -462,7 +474,7 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    expect(mockStartObservation).toHaveBeenCalledWith(
+    expect(mockRootSpanStartObservation).toHaveBeenCalledWith(
       "claude",
       expect.any(Object),
       {
@@ -563,6 +575,119 @@ describe("processTranscript", () => {
     );
   });
 
+  it("creates root span with asType agent", async () => {
+    const filePath = setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    expect(mockSpanStartObservation).toHaveBeenCalledWith(
+      "Turn 1",
+      expect.objectContaining({
+        input: { role: "user", content: "hello" },
+        output: { role: "assistant", content: "hi" },
+      }),
+      expect.objectContaining({ asType: "agent" }),
+    );
+  });
+
+  it("creates root span with timing", async () => {
+    const filePath = setupTranscript([
+      {
+        sessionId: "sess1",
+        type: "user",
+        timestamp: "2025-01-15T10:00:00Z",
+        content: "hello",
+      },
+      {
+        timestamp: "2025-01-15T10:00:05Z",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    expect(mockSpanStartObservation).toHaveBeenCalledWith(
+      "Turn 1",
+      expect.any(Object),
+      expect.objectContaining({
+        asType: "agent",
+        startTime: new Date("2025-01-15T10:00:00Z"),
+      }),
+    );
+  });
+
+  it("includes usageDetails in generation when usage is present", async () => {
+    const filePath = setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_input_tokens: 20,
+          },
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    expect(mockRootSpanStartObservation).toHaveBeenCalledWith(
+      "claude",
+      expect.objectContaining({
+        usageDetails: {
+          input: 100,
+          output: 50,
+          total: 150,
+          cache_read_input_tokens: 20,
+        },
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("omits usageDetails when usage is not present", async () => {
+    const filePath = setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    const callArgs = mockRootSpanStartObservation.mock.calls[0][1];
+    expect(callArgs).not.toHaveProperty("usageDetails");
+  });
+
   it("should omit timing when messages lack timestamp", async () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },
@@ -587,7 +712,7 @@ describe("processTranscript", () => {
     );
 
     // No startTime in generation options
-    expect(mockStartObservation).toHaveBeenCalledWith(
+    expect(mockRootSpanStartObservation).toHaveBeenCalledWith(
       "claude",
       expect.any(Object),
       { asType: "generation" },

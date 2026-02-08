@@ -190,6 +190,26 @@ export function groupTurns(messages: Message[]): Turn[] {
   return turns;
 }
 
+export function getUsage(msg: Message): Record<string, number> | undefined {
+  const usage = msg.message?.usage;
+  if (!usage) return undefined;
+
+  const details: Record<string, number> = {};
+  if (typeof usage.input_tokens === "number")
+    details.input = usage.input_tokens;
+  if (typeof usage.output_tokens === "number")
+    details.output = usage.output_tokens;
+  if (
+    typeof usage.input_tokens === "number" &&
+    typeof usage.output_tokens === "number"
+  )
+    details.total = usage.input_tokens + usage.output_tokens;
+  if (typeof usage.cache_read_input_tokens === "number")
+    details.cache_read_input_tokens = usage.cache_read_input_tokens;
+
+  return Object.keys(details).length > 0 ? details : undefined;
+}
+
 export function matchToolResults(
   toolUseBlocks: ToolUseBlock[],
   toolResults: Message[],

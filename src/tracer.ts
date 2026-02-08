@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import {
   startActiveObservation,
-  startObservation,
   updateActiveTrace,
   propagateAttributes,
 } from "@langfuse/tracing";
@@ -10,6 +9,7 @@ import {
   getTextContent,
   getTimestamp,
   getToolCalls,
+  getUsage,
   matchToolResults,
   groupTurns,
 } from "./parser.js";
@@ -29,6 +29,8 @@ function computeTraceEnd(messages: Message[]): Date | undefined {
 }
 
 function createGenerationObservation(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  parentObservation: any,
   assistant: Message,
   index: number,
   turn: Turn,
@@ -42,14 +44,16 @@ function createGenerationObservation(
   const toolCalls = matchToolResults(toolUseBlocks, turn.toolResults);
 
   const genStart = getTimestamp(assistant);
+  const usageDetails = getUsage(assistant);
 
-  const generation = startObservation(
+  const generation = parentObservation.startObservation(
     assistantModel,
     {
       model: assistantModel,
       ...(index === 0 && { input: { role: "user", content: userText } }),
       output: { role: "assistant", content: assistantText },
       metadata: { tool_count: toolCalls.length },
+      ...(usageDetails && { usageDetails }),
     },
     { asType: "generation", ...(genStart && { startTime: genStart }) },
   );
@@ -103,6 +107,18 @@ async function createTrace(
         },
       });
 
+      const rootSpan = span.startObservation(
+        `Turn ${turnNum}`,
+        {
+          input: { role: "user", content: userText },
+          output: { role: "assistant", content: lastAssistantText },
+        },
+        {
+          asType: "agent",
+          ...(hasTraceStart && { startTime: traceStart }),
+        },
+      );
+
       for (let i = 0; i < turn.assistants.length; i++) {
         const nextGenStart =
           i + 1 < turn.assistants.length
@@ -110,6 +126,7 @@ async function createTrace(
             : undefined;
 
         createGenerationObservation(
+          rootSpan,
           turn.assistants[i],
           i,
           turn,
@@ -120,6 +137,7 @@ async function createTrace(
       }
 
       if (traceEnd) {
+        rootSpan.end(traceEnd);
         span.end(traceEnd);
       }
     },

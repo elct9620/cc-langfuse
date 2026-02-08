@@ -88,8 +88,12 @@ Exits immediately if `TRACE_TO_LANGFUSE` is not `"true"`.
 Session (Session ID)
 └── Trace: "Turn N"
     └── Root Span: "Turn N"            (asType: "agent")
+        ├── Generation: "{model}"      (asType: "generation")
+        │   └── Tool: "Tool: {name}"   (asType: "tool")
+        ├── Generation: "{model}"      (asType: "generation")
+        │   ├── Tool: "Tool: {name}"   (asType: "tool")
+        │   └── Tool: "Tool: {name}"   (asType: "tool")
         └── Generation: "{model}"      (asType: "generation")
-            └── Tool: "Tool: {name}"   (asType: "tool")
 ```
 
 Each level carries the following data:

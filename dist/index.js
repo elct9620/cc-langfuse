@@ -3,7 +3,7 @@ import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { propagateAttributes, startActiveObservation, startObservation, updateActiveTrace } from "@langfuse/tracing";
+import { propagateAttributes, startActiveObservation, updateActiveTrace } from "@langfuse/tracing";
 
 //#region src/logger.ts
 const STATE_FILE = join(homedir(), ".claude", "state", "cc-langfuse_state.json");
@@ -198,6 +198,16 @@ function groupTurns(messages) {
 	finalizeTurn();
 	return turns;
 }
+function getUsage(msg) {
+	const usage = msg.message?.usage;
+	if (!usage) return void 0;
+	const details = {};
+	if (typeof usage.input_tokens === "number") details.input = usage.input_tokens;
+	if (typeof usage.output_tokens === "number") details.output = usage.output_tokens;
+	if (typeof usage.input_tokens === "number" && typeof usage.output_tokens === "number") details.total = usage.input_tokens + usage.output_tokens;
+	if (typeof usage.cache_read_input_tokens === "number") details.cache_read_input_tokens = usage.cache_read_input_tokens;
+	return Object.keys(details).length > 0 ? details : void 0;
+}
 function matchToolResults(toolUseBlocks, toolResults) {
 	return toolUseBlocks.map((block) => {
 		const match = toolResults.filter((tr) => Array.isArray(getContent(tr))).find((tr) => getContent(tr).some((item) => isToolResultBlock(item) && item.tool_use_id === block.id));
@@ -222,12 +232,13 @@ function computeTraceEnd(messages) {
 		return latest;
 	}, void 0);
 }
-function createGenerationObservation(assistant, index, turn, model, userText, genEnd) {
+function createGenerationObservation(parentObservation, assistant, index, turn, model, userText, genEnd) {
 	const assistantText = getTextContent(assistant);
 	const assistantModel = assistant.message?.model ?? model;
 	const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
 	const genStart = getTimestamp(assistant);
-	const generation = startObservation(assistantModel, {
+	const usageDetails = getUsage(assistant);
+	const generation = parentObservation.startObservation(assistantModel, {
 		model: assistantModel,
 		...index === 0 && { input: {
 			role: "user",
@@ -237,7 +248,8 @@ function createGenerationObservation(assistant, index, turn, model, userText, ge
 			role: "assistant",
 			content: assistantText
 		},
-		metadata: { tool_count: toolCalls.length }
+		metadata: { tool_count: toolCalls.length },
+		...usageDetails && { usageDetails }
 	}, {
 		asType: "generation",
 		...genStart && { startTime: genStart }
@@ -281,11 +293,27 @@ async function createTrace(sessionId, turnNum, turn) {
 				session_id: sessionId
 			}
 		});
+		const rootSpan = span.startObservation(`Turn ${turnNum}`, {
+			input: {
+				role: "user",
+				content: userText
+			},
+			output: {
+				role: "assistant",
+				content: lastAssistantText
+			}
+		}, {
+			asType: "agent",
+			...hasTraceStart && { startTime: traceStart }
+		});
 		for (let i = 0; i < turn.assistants.length; i++) {
 			const nextGenStart = i + 1 < turn.assistants.length ? getTimestamp(turn.assistants[i + 1]) : void 0;
-			createGenerationObservation(turn.assistants[i], i, turn, model, userText, nextGenStart ?? traceEnd);
+			createGenerationObservation(rootSpan, turn.assistants[i], i, turn, model, userText, nextGenStart ?? traceEnd);
 		}
-		if (traceEnd) span.end(traceEnd);
+		if (traceEnd) {
+			rootSpan.end(traceEnd);
+			span.end(traceEnd);
+		}
 	}, { ...hasTraceStart && {
 		startTime: traceStart,
 		endOnExit: false
