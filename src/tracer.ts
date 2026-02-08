@@ -5,6 +5,7 @@ import {
   updateActiveTrace,
   propagateAttributes,
 } from "@langfuse/tracing";
+import type { LangfuseObservation } from "@langfuse/tracing";
 import { debug } from "./logger.js";
 import {
   getTextContent,
@@ -16,6 +17,16 @@ import { matchToolResults, groupTurns } from "./parser.js";
 import type { Turn, Message } from "./types.js";
 import type { State } from "./filesystem.js";
 
+interface GenerationContext {
+  parentObservation: LangfuseObservation;
+  assistant: Message;
+  index: number;
+  turn: Turn;
+  model: string;
+  userText: string;
+  genEnd: Date | undefined;
+}
+
 function computeTraceEnd(messages: Message[]): Date | undefined {
   return messages.reduce<Date | undefined>((latest, msg) => {
     const ts = getTimestamp(msg);
@@ -25,24 +36,9 @@ function computeTraceEnd(messages: Message[]): Date | undefined {
   }, undefined);
 }
 
-/**
- * Translates parsed message data into Langfuse generation/tool observations.
- *
- * This function intentionally couples with parser/content helpers (getTextContent,
- * getToolCalls, matchToolResults, etc.) — the tracer acts as a translation layer
- * between the parsed transcript format and the Langfuse SDK. Introducing an
- * intermediate adapter would add complexity without meaningful decoupling.
- */
-function createGenerationObservation(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  parentObservation: any,
-  assistant: Message,
-  index: number,
-  turn: Turn,
-  model: string,
-  userText: string,
-  genEnd: Date | undefined,
-): void {
+function createGenerationObservation(ctx: GenerationContext): void {
+  const { parentObservation, assistant, index, turn, model, userText, genEnd } =
+    ctx;
   const assistantText = getTextContent(assistant);
   const assistantModel = assistant.message?.model ?? model;
   const toolUseBlocks = getToolCalls(assistant);
@@ -143,15 +139,15 @@ async function createTrace(
             ? getTimestamp(turn.assistants[i + 1])
             : undefined;
 
-        createGenerationObservation(
-          rootSpan,
-          turn.assistants[i],
-          i,
+        createGenerationObservation({
+          parentObservation: rootSpan,
+          assistant: turn.assistants[i],
+          index: i,
           turn,
           model,
           userText,
-          nextGenStart ?? new Date(),
-        );
+          genEnd: nextGenStart ?? new Date(),
+        });
       }
 
       if (traceEnd) {
