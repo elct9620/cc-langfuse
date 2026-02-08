@@ -40,6 +40,26 @@ interface LangfuseConfig {
   baseUrl?: string;
 }
 
+function initializeSDK(config: LangfuseConfig): {
+  sdk: NodeSDK;
+  spanProcessor: LangfuseSpanProcessor;
+} {
+  const spanProcessor = new LangfuseSpanProcessor({
+    exportMode: "immediate",
+    publicKey: config.publicKey,
+    secretKey: config.secretKey,
+    baseUrl: config.baseUrl,
+  });
+
+  const sdk = new NodeSDK({
+    spanProcessors: [spanProcessor],
+  });
+
+  sdk.start();
+
+  return { sdk, spanProcessor };
+}
+
 function resolveEnvVars(): LangfuseConfig | null {
   const publicKey =
     process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY;
@@ -71,18 +91,7 @@ export async function hook(): Promise<void> {
     return;
   }
 
-  const spanProcessor = new LangfuseSpanProcessor({
-    exportMode: "immediate",
-    publicKey: config.publicKey,
-    secretKey: config.secretKey,
-    baseUrl: config.baseUrl,
-  });
-
-  const sdk = new NodeSDK({
-    spanProcessors: [spanProcessor],
-  });
-
-  sdk.start();
+  const { sdk, spanProcessor } = initializeSDK(config);
 
   const state = loadState();
 
