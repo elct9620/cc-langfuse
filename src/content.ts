@@ -29,6 +29,11 @@ export function isToolResultBlock(item: unknown): item is ToolResultBlock {
   return isBlockOfType<ToolResultBlock>(item, "tool_result");
 }
 
+export function getSessionId(msg: Message): string | undefined {
+  const sid = msg.sessionId;
+  return typeof sid === "string" ? sid : undefined;
+}
+
 export function getTimestamp(msg: Message): Date | undefined {
   const ts = msg.timestamp ?? msg.message?.timestamp;
   if (typeof ts === "string") return new Date(ts);

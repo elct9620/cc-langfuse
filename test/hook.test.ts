@@ -110,7 +110,8 @@ afterEach(() => {
 
 // Import after mocks
 const { hook } = await import("../src/index.js");
-const { processTranscript } = await import("../src/tracer.js");
+const { processTranscript, processTranscriptWithRecovery } =
+  await import("../src/tracer.js");
 const { loadState, saveState, findPreviousSession } =
   await import("../src/filesystem.js");
 const { NodeSDK } = await import("@opentelemetry/sdk-node");
@@ -1047,5 +1048,203 @@ describe("state management", () => {
     saveState(state);
     const loaded = loadState();
     expect(loaded).toEqual(state);
+  });
+});
+
+describe("processTranscriptWithRecovery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it("merges prev user-only + current assistant into 1 complete turn", async () => {
+    // Previous session: user message only (no assistant reply)
+    const prevPath = setupTranscriptAt("prev-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "hello from prev" },
+    ]);
+
+    // Current session: prev user leftover, then assistant reply
+    const currentPath = setupTranscriptAt("current-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "hello from prev" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "reply to prev" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    const result = await processTranscriptWithRecovery(
+      "current-session",
+      currentPath,
+      "prev-session",
+      prevPath,
+      state,
+    );
+
+    expect(result.turns).toBe(1);
+    expect(mockStartActiveObservation).toHaveBeenCalledTimes(1);
+    expect(mockPropagateAttributes).toHaveBeenCalledWith(
+      { sessionId: "prev-session" },
+      expect.any(Function),
+    );
+    // prev session state should be marked as fully processed
+    expect(result.updatedState["prev-session"].last_line).toBe(1);
+    expect(result.updatedState["prev-session"].turn_count).toBe(1);
+  });
+
+  it("splits turns across prev and current sessions by sessionId", async () => {
+    const prevPath = setupTranscriptAt("prev-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "prev question" },
+    ]);
+
+    const currentPath = setupTranscriptAt("current-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "prev question" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "prev answer" }],
+        },
+      },
+      {
+        sessionId: "current-session",
+        type: "user",
+        content: "current question",
+      },
+      {
+        message: {
+          id: "m2",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "current answer" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    const result = await processTranscriptWithRecovery(
+      "current-session",
+      currentPath,
+      "prev-session",
+      prevPath,
+      state,
+    );
+
+    expect(result.turns).toBe(2);
+    // Both sessions should have propagateAttributes called
+    expect(mockPropagateAttributes).toHaveBeenCalledWith(
+      { sessionId: "prev-session" },
+      expect.any(Function),
+    );
+    expect(mockPropagateAttributes).toHaveBeenCalledWith(
+      { sessionId: "current-session" },
+      expect.any(Function),
+    );
+    expect(result.updatedState["prev-session"].turn_count).toBe(1);
+    expect(result.updatedState["current-session"].turn_count).toBe(1);
+  });
+
+  it("returns zero turns when both transcripts are empty", async () => {
+    const prevPath = setupTranscriptAt("prev-session.jsonl", [
+      { sessionId: "prev-session", isMeta: true },
+    ]);
+
+    const currentPath = setupTranscriptAt("current-session.jsonl", [
+      { sessionId: "prev-session", isMeta: true },
+    ]);
+
+    const state = {
+      "prev-session": { last_line: 1, turn_count: 0, updated: "" },
+      "current-session": { last_line: 1, turn_count: 0, updated: "" },
+    };
+
+    const result = await processTranscriptWithRecovery(
+      "current-session",
+      currentPath,
+      "prev-session",
+      prevPath,
+      state,
+    );
+
+    expect(result.turns).toBe(0);
+  });
+});
+
+describe("updateActiveTrace name", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes name in updateActiveTrace call", async () => {
+    const filePath = setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    expect(mockUpdateActiveTrace).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Turn 1" }),
+    );
+  });
+
+  it("includes correct turn number in name for second turn", async () => {
+    const filePath = setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+      { type: "user", content: "bye" },
+      {
+        message: {
+          id: "m2",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "goodbye" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    expect(mockUpdateActiveTrace).toHaveBeenCalledTimes(2);
+    expect(mockUpdateActiveTrace).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Turn 1" }),
+    );
+    expect(mockUpdateActiveTrace).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Turn 2" }),
+    );
   });
 });

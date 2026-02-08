@@ -3,7 +3,7 @@ import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { log, debug, HOOK_WARNING_THRESHOLD_SECONDS } from "./logger.js";
 import { loadState, saveState, findPreviousSession } from "./filesystem.js";
 import type { State } from "./filesystem.js";
-import { processTranscript } from "./tracer.js";
+import { processTranscript, processTranscriptWithRecovery } from "./tracer.js";
 
 interface HookInput {
   session_id: string;
@@ -61,29 +61,6 @@ function initializeSDK(config: LangfuseConfig): {
   return { sdk, spanProcessor };
 }
 
-async function recoverPreviousSession(
-  filePath: string,
-  sessionId: string,
-  state: State,
-): Promise<State> {
-  const previous = findPreviousSession(filePath, sessionId, state);
-  if (!previous) return state;
-
-  debug(`Recovering previous session: ${previous.sessionId}`);
-  try {
-    const { updatedState } = await processTranscript(
-      previous.sessionId,
-      previous.transcriptPath,
-      state,
-    );
-    return updatedState;
-  } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : String(e);
-    log("ERROR", `Failed to recover previous session: ${message}`);
-    return state;
-  }
-}
-
 function resolveEnvVars(): LangfuseConfig | null {
   const publicKey =
     process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY;
@@ -130,14 +107,30 @@ export async function hook(): Promise<void> {
   const filePath = input.transcript_path;
   debug(`Processing session: ${sessionId}`);
 
-  const currentState = await recoverPreviousSession(filePath, sessionId, state);
-
   try {
-    const { turns, updatedState } = await processTranscript(
-      sessionId,
-      filePath,
-      currentState,
-    );
+    const previous = findPreviousSession(filePath, sessionId, state);
+    let result: { turns: number; updatedState: State };
+
+    if (previous) {
+      debug(`Recovering previous session: ${previous.sessionId}`);
+      try {
+        result = await processTranscriptWithRecovery(
+          sessionId,
+          filePath,
+          previous.sessionId,
+          previous.transcriptPath,
+          state,
+        );
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        log("ERROR", `Failed to recover previous session: ${msg}`);
+        result = await processTranscript(sessionId, filePath, state);
+      }
+    } else {
+      result = await processTranscript(sessionId, filePath, state);
+    }
+
+    const { turns, updatedState } = result;
     saveState(updatedState);
 
     await spanProcessor.forceFlush();

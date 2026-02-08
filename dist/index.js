@@ -81,6 +81,25 @@ function parseNewMessages(transcriptFile, lastLine) {
 		lineOffsets
 	} : null;
 }
+function countTotalLines(filePath) {
+	try {
+		return readFileSync(filePath, "utf8").trim().split("\n").length;
+	} catch {
+		return 0;
+	}
+}
+function mergeTranscriptMessages(prevFile, prevLastLine, currentFile, currentLastLine) {
+	const prev = parseNewMessages(prevFile, prevLastLine);
+	const current = parseNewMessages(currentFile, currentLastLine);
+	const prevMessages = prev?.messages ?? [];
+	const currentMessages = current?.messages ?? [];
+	if (prevMessages.length === 0 && currentMessages.length === 0) return null;
+	return {
+		messages: [...prevMessages, ...currentMessages],
+		prevCount: prevMessages.length,
+		currentLineOffsets: current?.lineOffsets ?? []
+	};
+}
 function computeUpdatedState(state, sessionId, turnCount, newTurns, consumed, lineOffsets, lastLine) {
 	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
 	return {
@@ -106,6 +125,10 @@ function isToolUseBlock(item) {
 }
 function isToolResultBlock(item) {
 	return isBlockOfType(item, "tool_result");
+}
+function getSessionId(msg) {
+	const sid = msg.sessionId;
+	return typeof sid === "string" ? sid : void 0;
 }
 function getTimestamp(msg) {
 	const ts = msg.timestamp ?? msg.message?.timestamp;
@@ -352,6 +375,7 @@ async function createTrace(sessionId, turnNum, turn) {
 	const hasTraceStart = traceStart !== void 0;
 	await startActiveObservation(`Turn ${turnNum}`, async (span) => {
 		updateActiveTrace({
+			name: `Turn ${turnNum}`,
 			sessionId,
 			input: {
 				role: "user",
@@ -419,6 +443,66 @@ async function processTranscript(sessionId, transcriptFile, state) {
 		updatedState
 	};
 }
+async function processTranscriptWithRecovery(currentSessionId, currentFile, prevSessionId, prevFile, state) {
+	const prevState = state[prevSessionId] ?? {
+		last_line: 0,
+		turn_count: 0
+	};
+	const currentState = state[currentSessionId] ?? {
+		last_line: 0,
+		turn_count: 0
+	};
+	const merged = mergeTranscriptMessages(prevFile, prevState.last_line, currentFile, currentState.last_line);
+	if (!merged) return {
+		turns: 0,
+		updatedState: state
+	};
+	debug(`Merging transcripts: ${merged.prevCount} prev + ${merged.messages.length - merged.prevCount} current messages`);
+	const { turns, consumed } = groupTurns(merged.messages);
+	if (turns.length === 0) return {
+		turns: 0,
+		updatedState: state
+	};
+	const prevTurns = [];
+	const currentTurns = [];
+	for (let i = 0; i < turns.length; i++) if (getSessionId(turns[i].user) === prevSessionId) prevTurns.push({
+		turn: turns[i],
+		index: i
+	});
+	else currentTurns.push({
+		turn: turns[i],
+		index: i
+	});
+	if (prevTurns.length > 0) await propagateAttributes({ sessionId: prevSessionId }, async () => {
+		for (let i = 0; i < prevTurns.length; i++) await createTrace(prevSessionId, prevState.turn_count + i + 1, prevTurns[i].turn);
+	});
+	if (currentTurns.length > 0) await propagateAttributes({ sessionId: currentSessionId }, async () => {
+		for (let i = 0; i < currentTurns.length; i++) await createTrace(currentSessionId, currentState.turn_count + i + 1, currentTurns[i].turn);
+	});
+	const prevTotalLines = countTotalLines(prevFile);
+	let updatedState = {
+		...state,
+		[prevSessionId]: {
+			last_line: prevTotalLines,
+			turn_count: prevState.turn_count + prevTurns.length,
+			updated: (/* @__PURE__ */ new Date()).toISOString()
+		}
+	};
+	const currentConsumed = Math.max(0, consumed - merged.prevCount);
+	const currentLastLine = currentConsumed > 0 ? merged.currentLineOffsets[currentConsumed - 1] : currentState.last_line;
+	updatedState = {
+		...updatedState,
+		[currentSessionId]: {
+			last_line: currentLastLine,
+			turn_count: currentState.turn_count + currentTurns.length,
+			updated: (/* @__PURE__ */ new Date()).toISOString()
+		}
+	};
+	return {
+		turns: turns.length,
+		updatedState
+	};
+}
 
 //#endregion
 //#region src/index.ts
@@ -451,18 +535,6 @@ function initializeSDK(config) {
 		sdk,
 		spanProcessor
 	};
-}
-async function recoverPreviousSession(filePath, sessionId, state) {
-	const previous = findPreviousSession(filePath, sessionId, state);
-	if (!previous) return state;
-	debug(`Recovering previous session: ${previous.sessionId}`);
-	try {
-		const { updatedState } = await processTranscript(previous.sessionId, previous.transcriptPath, state);
-		return updatedState;
-	} catch (e) {
-		log("ERROR", `Failed to recover previous session: ${e instanceof Error ? e.message : String(e)}`);
-		return state;
-	}
 }
 function resolveEnvVars() {
 	const publicKey = process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY;
@@ -498,9 +570,19 @@ async function hook() {
 	const sessionId = input.session_id;
 	const filePath = input.transcript_path;
 	debug(`Processing session: ${sessionId}`);
-	const currentState = await recoverPreviousSession(filePath, sessionId, state);
 	try {
-		const { turns, updatedState } = await processTranscript(sessionId, filePath, currentState);
+		const previous = findPreviousSession(filePath, sessionId, state);
+		let result;
+		if (previous) {
+			debug(`Recovering previous session: ${previous.sessionId}`);
+			try {
+				result = await processTranscriptWithRecovery(sessionId, filePath, previous.sessionId, previous.transcriptPath, state);
+			} catch (e) {
+				log("ERROR", `Failed to recover previous session: ${e instanceof Error ? e.message : String(e)}`);
+				result = await processTranscript(sessionId, filePath, state);
+			}
+		} else result = await processTranscript(sessionId, filePath, state);
+		const { turns, updatedState } = result;
 		saveState(updatedState);
 		await spanProcessor.forceFlush();
 		const duration = (Date.now() - scriptStart) / 1e3;

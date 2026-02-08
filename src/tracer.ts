@@ -7,6 +7,7 @@ import {
 import type { LangfuseObservation } from "@langfuse/tracing";
 import { debug } from "./logger.js";
 import {
+  getSessionId,
   getTextContent,
   getTimestamp,
   getToolCalls,
@@ -14,7 +15,12 @@ import {
 } from "./content.js";
 import { matchToolResults, groupTurns } from "./parser.js";
 import type { Turn, Message } from "./types.js";
-import { parseNewMessages, computeUpdatedState } from "./filesystem.js";
+import {
+  parseNewMessages,
+  computeUpdatedState,
+  mergeTranscriptMessages,
+  countTotalLines,
+} from "./filesystem.js";
 import type { State } from "./filesystem.js";
 
 interface GenerationContext {
@@ -146,6 +152,7 @@ async function createTrace(
     `Turn ${turnNum}`,
     async (span) => {
       updateActiveTrace({
+        name: `Turn ${turnNum}`,
         sessionId,
         input: { role: "user", content: userText },
         output: { role: "assistant", content: lastAssistantText },
@@ -218,6 +225,104 @@ export async function processTranscript(
     parsed.lineOffsets,
     lastLine,
   );
+
+  return { turns: turns.length, updatedState };
+}
+
+export async function processTranscriptWithRecovery(
+  currentSessionId: string,
+  currentFile: string,
+  prevSessionId: string,
+  prevFile: string,
+  state: State,
+): Promise<{ turns: number; updatedState: State }> {
+  const prevState = state[prevSessionId] ?? { last_line: 0, turn_count: 0 };
+  const currentState = state[currentSessionId] ?? {
+    last_line: 0,
+    turn_count: 0,
+  };
+
+  const merged = mergeTranscriptMessages(
+    prevFile,
+    prevState.last_line,
+    currentFile,
+    currentState.last_line,
+  );
+  if (!merged) return { turns: 0, updatedState: state };
+
+  debug(
+    `Merging transcripts: ${merged.prevCount} prev + ${merged.messages.length - merged.prevCount} current messages`,
+  );
+
+  const { turns, consumed } = groupTurns(merged.messages);
+  if (turns.length === 0) return { turns: 0, updatedState: state };
+
+  // Partition turns by sessionId
+  const prevTurns: { turn: Turn; index: number }[] = [];
+  const currentTurns: { turn: Turn; index: number }[] = [];
+
+  for (let i = 0; i < turns.length; i++) {
+    const sid = getSessionId(turns[i].user);
+    if (sid === prevSessionId) {
+      prevTurns.push({ turn: turns[i], index: i });
+    } else {
+      currentTurns.push({ turn: turns[i], index: i });
+    }
+  }
+
+  // Create traces for prev session turns
+  if (prevTurns.length > 0) {
+    await propagateAttributes({ sessionId: prevSessionId }, async () => {
+      for (let i = 0; i < prevTurns.length; i++) {
+        await createTrace(
+          prevSessionId,
+          prevState.turn_count + i + 1,
+          prevTurns[i].turn,
+        );
+      }
+    });
+  }
+
+  // Create traces for current session turns
+  if (currentTurns.length > 0) {
+    await propagateAttributes({ sessionId: currentSessionId }, async () => {
+      for (let i = 0; i < currentTurns.length; i++) {
+        await createTrace(
+          currentSessionId,
+          currentState.turn_count + i + 1,
+          currentTurns[i].turn,
+        );
+      }
+    });
+  }
+
+  // Compute state for prev session: mark fully processed
+  const prevTotalLines = countTotalLines(prevFile);
+  let updatedState: State = {
+    ...state,
+    [prevSessionId]: {
+      last_line: prevTotalLines,
+      turn_count: prevState.turn_count + prevTurns.length,
+      updated: new Date().toISOString(),
+    },
+  };
+
+  // Compute state for current session
+  // consumed is in merged-message space; subtract prevCount to get current-only consumed
+  const currentConsumed = Math.max(0, consumed - merged.prevCount);
+  const currentLastLine =
+    currentConsumed > 0
+      ? merged.currentLineOffsets[currentConsumed - 1]
+      : currentState.last_line;
+
+  updatedState = {
+    ...updatedState,
+    [currentSessionId]: {
+      last_line: currentLastLine,
+      turn_count: currentState.turn_count + currentTurns.length,
+      updated: new Date().toISOString(),
+    },
+  };
 
   return { turns: turns.length, updatedState };
 }
