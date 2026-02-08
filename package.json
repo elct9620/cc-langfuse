@@ -7,10 +7,16 @@
     "cc-langfuse": "./bin/cli.js"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "keywords": [],
   "author": "Aotokitsuruya",
   "license": "Apache-2.0",
-  "packageManager": "pnpm@10.28.0"
+  "packageManager": "pnpm@10.28.0",
+  "devDependencies": {
+    "prettier": "^3.8.1",
+    "vitest": "^4.0.18"
+  }
 }
