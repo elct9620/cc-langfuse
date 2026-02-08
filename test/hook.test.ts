@@ -84,6 +84,7 @@ const { hook } = await import("../src/index.js");
 const { processTranscript } = await import("../src/tracer.js");
 const { loadState, saveState } = await import("../src/filesystem.js");
 const { NodeSDK } = await import("@opentelemetry/sdk-node");
+const { LangfuseSpanProcessor } = await import("@langfuse/otel");
 
 function setupTranscript(lines: object[]): string {
   const projectDir = join(testDir, ".claude", "projects", "test-project");
@@ -117,6 +118,61 @@ describe("hook", () => {
     vi.stubEnv("TRACE_TO_LANGFUSE", "true");
     await hook();
     expect(NodeSDK).not.toHaveBeenCalled();
+  });
+
+  it("passes credentials to LangfuseSpanProcessor", async () => {
+    vi.stubEnv("TRACE_TO_LANGFUSE", "true");
+    vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
+    vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
+    vi.stubEnv("CC_LANGFUSE_BASE_URL", "https://langfuse.example.com");
+
+    setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude-sonnet-4-5-20250929",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    await hook();
+
+    expect(LangfuseSpanProcessor).toHaveBeenCalledWith({
+      exportMode: "immediate",
+      publicKey: "pk-test",
+      secretKey: "sk-test",
+      baseUrl: "https://langfuse.example.com",
+    });
+  });
+
+  it("omits baseUrl when not set", async () => {
+    vi.stubEnv("TRACE_TO_LANGFUSE", "true");
+    vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
+    vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
+
+    setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude-sonnet-4-5-20250929",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    await hook();
+
+    expect(LangfuseSpanProcessor).toHaveBeenCalledWith({
+      exportMode: "immediate",
+      publicKey: "pk-test",
+      secretKey: "sk-test",
+      baseUrl: undefined,
+    });
   });
 
   it("initializes NodeSDK and processes transcript", async () => {

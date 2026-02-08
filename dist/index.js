@@ -321,11 +321,12 @@ function resolveEnvVars() {
 	const publicKey = process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY;
 	const secretKey = process.env.CC_LANGFUSE_SECRET_KEY ?? process.env.LANGFUSE_SECRET_KEY;
 	const baseUrl = process.env.CC_LANGFUSE_BASE_URL ?? process.env.LANGFUSE_BASE_URL;
-	if (!publicKey || !secretKey) return false;
-	process.env.LANGFUSE_PUBLIC_KEY = publicKey;
-	process.env.LANGFUSE_SECRET_KEY = secretKey;
-	if (baseUrl) process.env.LANGFUSE_BASE_URL = baseUrl;
-	return true;
+	if (!publicKey || !secretKey) return null;
+	return {
+		publicKey,
+		secretKey,
+		baseUrl: baseUrl || void 0
+	};
 }
 async function hook() {
 	const scriptStart = Date.now();
@@ -334,11 +335,17 @@ async function hook() {
 		debug("Tracing disabled (TRACE_TO_LANGFUSE != true)");
 		return;
 	}
-	if (!resolveEnvVars()) {
+	const config = resolveEnvVars();
+	if (!config) {
 		log("ERROR", "Langfuse API keys not set (CC_LANGFUSE_PUBLIC_KEY / CC_LANGFUSE_SECRET_KEY)");
 		return;
 	}
-	const spanProcessor = new LangfuseSpanProcessor({ exportMode: "immediate" });
+	const spanProcessor = new LangfuseSpanProcessor({
+		exportMode: "immediate",
+		publicKey: config.publicKey,
+		secretKey: config.secretKey,
+		baseUrl: config.baseUrl
+	});
 	const sdk = new NodeSDK({ spanProcessors: [spanProcessor] });
 	sdk.start();
 	const state = loadState();

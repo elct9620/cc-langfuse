@@ -4,7 +4,13 @@ import { log, debug, HOOK_WARNING_THRESHOLD_SECONDS } from "./logger.js";
 import { loadState, findLatestTranscript, saveState } from "./filesystem.js";
 import { processTranscript } from "./tracer.js";
 
-function resolveEnvVars(): boolean {
+interface LangfuseConfig {
+  publicKey: string;
+  secretKey: string;
+  baseUrl?: string;
+}
+
+function resolveEnvVars(): LangfuseConfig | null {
   const publicKey =
     process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey =
@@ -12,13 +18,9 @@ function resolveEnvVars(): boolean {
   const baseUrl =
     process.env.CC_LANGFUSE_BASE_URL ?? process.env.LANGFUSE_BASE_URL;
 
-  if (!publicKey || !secretKey) return false;
+  if (!publicKey || !secretKey) return null;
 
-  process.env.LANGFUSE_PUBLIC_KEY = publicKey;
-  process.env.LANGFUSE_SECRET_KEY = secretKey;
-  if (baseUrl) process.env.LANGFUSE_BASE_URL = baseUrl;
-
-  return true;
+  return { publicKey, secretKey, baseUrl: baseUrl || undefined };
 }
 
 export async function hook(): Promise<void> {
@@ -30,7 +32,8 @@ export async function hook(): Promise<void> {
     return;
   }
 
-  if (!resolveEnvVars()) {
+  const config = resolveEnvVars();
+  if (!config) {
     log(
       "ERROR",
       "Langfuse API keys not set (CC_LANGFUSE_PUBLIC_KEY / CC_LANGFUSE_SECRET_KEY)",
@@ -40,6 +43,9 @@ export async function hook(): Promise<void> {
 
   const spanProcessor = new LangfuseSpanProcessor({
     exportMode: "immediate",
+    publicKey: config.publicKey,
+    secretKey: config.secretKey,
+    baseUrl: config.baseUrl,
   });
 
   const sdk = new NodeSDK({
