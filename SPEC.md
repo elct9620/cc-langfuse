@@ -109,6 +109,7 @@ Exits immediately if `TRACE_TO_LANGFUSE` is not `"true"`.
 | Execution model | Always via `pnpm dlx`                     | No local install required; version pinning via git ref            |
 | Language        | TypeScript (compiled to JavaScript)       | Type safety; compiled to ES Modules for runtime                   |
 | Runtime         | Node.js (ES Modules)                      | Matches project ecosystem; available where Claude Code runs       |
+| Bundler         | Rolldown → single `dist/index.js`         | Single-file output reduces `pnpm dlx` install time and simplifies distribution |
 | Langfuse SDK    | `langfuse` npm package                    | Declared as dependency, resolved by `pnpm dlx`                    |
 | State file      | `~/.claude/state/cc-langfuse_state.json`  | Follows Claude Code convention for state storage                  |
 | Log file        | `~/.claude/state/cc-langfuse_hook.log`    | Follows Claude Code convention for log storage                    |
