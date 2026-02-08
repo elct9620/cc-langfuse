@@ -36,12 +36,39 @@ export function mergeAssistantParts(parts: Message[]): Message {
   return result;
 }
 
+class AssistantPartAccumulator {
+  private parts: Message[] = [];
+  private msgId: string | null = null;
+
+  add(msg: Message): Message | undefined {
+    const id: string | undefined = msg.message?.id;
+
+    if (!id || id === this.msgId) {
+      this.parts.push(msg);
+      if (id) this.msgId = id;
+      return undefined;
+    }
+
+    const flushed = this.flush();
+    this.msgId = id;
+    this.parts = [msg];
+    return flushed;
+  }
+
+  flush(): Message | undefined {
+    if (this.msgId === null || this.parts.length === 0) return undefined;
+    const merged = mergeAssistantParts(this.parts);
+    this.parts = [];
+    this.msgId = null;
+    return merged;
+  }
+}
+
 class TurnBuilder {
   private turns: Turn[] = [];
   private currentUser: Message | null = null;
   private currentAssistants: Message[] = [];
-  private currentParts: Message[] = [];
-  private currentMsgId: string | null = null;
+  private accumulator = new AssistantPartAccumulator();
   private currentToolResults: Message[] = [];
   private lastCompleteTurnEnd = 0;
 
@@ -79,35 +106,19 @@ class TurnBuilder {
 
     this.currentUser = msg;
     this.currentAssistants = [];
-    this.currentParts = [];
-    this.currentMsgId = null;
+    this.accumulator = new AssistantPartAccumulator();
     this.currentToolResults = [];
   }
 
   private handleAssistant(msg: Message): void {
-    const msgId: string | undefined = msg.message?.id;
-
-    if (!msgId) {
-      this.currentParts.push(msg);
-    } else if (msgId === this.currentMsgId) {
-      this.currentParts.push(msg);
-    } else {
-      this.finalizeParts();
-      this.currentMsgId = msgId;
-      this.currentParts = [msg];
-    }
-  }
-
-  private finalizeParts(): void {
-    if (this.currentMsgId !== null && this.currentParts.length > 0) {
-      this.currentAssistants.push(mergeAssistantParts(this.currentParts));
-      this.currentParts = [];
-      this.currentMsgId = null;
-    }
+    const merged = this.accumulator.add(msg);
+    if (merged) this.currentAssistants.push(merged);
   }
 
   private finalizeTurn(nextIdx: number): void {
-    this.finalizeParts();
+    const remaining = this.accumulator.flush();
+    if (remaining) this.currentAssistants.push(remaining);
+
     if (this.currentUser !== null && this.currentAssistants.length > 0) {
       this.turns.push({
         user: this.currentUser,
