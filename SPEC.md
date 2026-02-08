@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A Node.js CLI tool that sets up Claude Code hooks to send usage data to Langfuse, enabling observability of Claude Code sessions with minimal configuration.
+A Node.js CLI hook tool that sends Claude Code session data to Langfuse, enabling observability of Claude Code sessions.
 
 ## Users
 
@@ -11,7 +11,6 @@ A Node.js CLI tool that sets up Claude Code hooks to send usage data to Langfuse
 ## Impacts
 
 - Users can monitor Claude Code sessions in Langfuse without writing custom hook scripts.
-- Users complete setup in under a minute with a single command.
 
 ## Non-goals
 
@@ -21,7 +20,6 @@ A Node.js CLI tool that sets up Claude Code hooks to send usage data to Langfuse
 
 ## Success Criteria
 
-- Running `pnpm dlx github:elct9620/cc-langfuse` configures the hook with interactive prompts.
 - Claude Code's `Stop` hook triggers `pnpm dlx github:elct9620/cc-langfuse hook`, sending session data to Langfuse.
 - No local script files are installed; all execution happens via `pnpm dlx`.
 - Traces appear in Langfuse with session, turn, generation, and tool span structure.
@@ -30,29 +28,9 @@ A Node.js CLI tool that sets up Claude Code hooks to send usage data to Langfuse
 
 ## Behaviors
 
-### Setup Command
+### Configuration
 
-```
-pnpm dlx github:elct9620/cc-langfuse
-```
-
-Supports version pinning:
-
-```
-pnpm dlx github:elct9620/cc-langfuse#0.1.0
-```
-
-The CLI runs interactively to configure the hook.
-
-| Step | Action                                          | Details                                      |
-| ---- | ----------------------------------------------- | -------------------------------------------- |
-| 1    | Prompt for Langfuse credentials                 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` |
-| 2    | Prompt for Langfuse host                        | Default: `https://cloud.langfuse.com`        |
-| 3    | Register hook in `~/.claude/settings.json`      | Add `Stop` hook entry                        |
-| 4    | Write env vars to `.claude/settings.local.json` | In the current project directory             |
-| 5    | Confirm success                                 | Print summary of what was configured         |
-
-When the user specifies a version (e.g., `#0.1.0`), the hook command also pins to that version.
+Users manually configure the hook and credentials.
 
 #### Hook Configuration (`~/.claude/settings.json`)
 
@@ -75,7 +53,7 @@ When the user specifies a version (e.g., `#0.1.0`), the hook command also pins t
 
 #### Per-Project Environment (`.claude/settings.local.json`)
 
-Tracing is opt-in per project. The setup command writes this file in the current project directory.
+Tracing is opt-in per project. Users add this to the project's `.claude/settings.local.json`.
 
 ```json
 {
@@ -115,15 +93,11 @@ Exits immediately if `TRACE_TO_LANGFUSE` is not `"true"`.
 
 ### Error Scenarios
 
-| Scenario                                                   | Behavior                                                                                 |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `~/.claude/settings.json` does not exist                   | Create the file with hook configuration                                                  |
-| `~/.claude/settings.json` already has a `cc-langfuse` hook | Overwrite the existing hook entry, preserve other hooks                                  |
-| `.claude/settings.local.json` already exists in project    | Merge `env` entries, preserve other settings                                             |
-| Transcript file not found                                  | Exit silently (no error to avoid disrupting Claude Code)                                 |
-| Langfuse API unreachable                                   | Log error to `~/.claude/state/cc-langfuse_hook.log`, exit without disrupting Claude Code |
-| Invalid credentials at setup time                          | Do not validate; errors surface in hook log at runtime                                   |
-| State file corrupted or missing                            | Reset state, reprocess from beginning of current transcript                              |
+| Scenario                    | Behavior                                                                                 |
+| --------------------------- | ---------------------------------------------------------------------------------------- |
+| Transcript file not found   | Exit silently (no error to avoid disrupting Claude Code)                                 |
+| Langfuse API unreachable    | Log error to `~/.claude/state/cc-langfuse_hook.log`, exit without disrupting Claude Code |
+| State file corrupted or missing | Reset state, reprocess from beginning of current transcript                          |
 
 ---
 
