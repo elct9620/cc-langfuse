@@ -2,6 +2,7 @@ import { NodeSDK } from "@opentelemetry/sdk-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { log, debug, HOOK_WARNING_THRESHOLD_SECONDS } from "./logger.js";
 import { loadState, saveState, findPreviousSession } from "./filesystem.js";
+import type { State } from "./filesystem.js";
 import { processTranscript } from "./tracer.js";
 
 interface HookInput {
@@ -60,6 +61,29 @@ function initializeSDK(config: LangfuseConfig): {
   return { sdk, spanProcessor };
 }
 
+async function recoverPreviousSession(
+  filePath: string,
+  sessionId: string,
+  state: State,
+): Promise<State> {
+  const previous = findPreviousSession(filePath, sessionId, state);
+  if (!previous) return state;
+
+  debug(`Recovering previous session: ${previous.sessionId}`);
+  try {
+    const { updatedState } = await processTranscript(
+      previous.sessionId,
+      previous.transcriptPath,
+      state,
+    );
+    return updatedState;
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    log("ERROR", `Failed to recover previous session: ${message}`);
+    return state;
+  }
+}
+
 function resolveEnvVars(): LangfuseConfig | null {
   const publicKey =
     process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY;
@@ -106,24 +130,7 @@ export async function hook(): Promise<void> {
   const filePath = input.transcript_path;
   debug(`Processing session: ${sessionId}`);
 
-  let currentState = state;
-
-  // Recover orphaned previous session (e.g. Plan Mode exit)
-  const previous = findPreviousSession(filePath, sessionId, currentState);
-  if (previous) {
-    debug(`Recovering previous session: ${previous.sessionId}`);
-    try {
-      const { updatedState } = await processTranscript(
-        previous.sessionId,
-        previous.transcriptPath,
-        currentState,
-      );
-      currentState = updatedState;
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      log("ERROR", `Failed to recover previous session: ${message}`);
-    }
-  }
+  const currentState = await recoverPreviousSession(filePath, sessionId, state);
 
   try {
     const { turns, updatedState } = await processTranscript(
