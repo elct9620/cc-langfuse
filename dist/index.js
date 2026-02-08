@@ -20,6 +20,13 @@ function debug(message) {
 
 //#endregion
 //#region src/filesystem.ts
+/**
+* Loads persisted session state from disk.
+*
+* Returns empty state on any failure (missing file, corrupt JSON, permission
+* errors) — this is intentional graceful degradation so the hook can always
+* proceed by reprocessing from scratch rather than crashing.
+*/
 function loadState() {
 	try {
 		return JSON.parse(readFileSync(STATE_FILE, "utf8"));
@@ -91,7 +98,7 @@ function findLatestTranscript() {
 }
 
 //#endregion
-//#region src/parser.ts
+//#region src/content.ts
 function isTextBlock(item) {
 	return typeof item === "object" && item !== null && item.type === "text";
 }
@@ -130,6 +137,19 @@ function getTextContent(msg) {
 	else if (typeof item === "string") parts.push(item);
 	return parts.join("\n");
 }
+function getUsage(msg) {
+	const usage = msg.message?.usage;
+	if (!usage) return void 0;
+	const details = {};
+	if (typeof usage.input_tokens === "number") details.input = usage.input_tokens;
+	if (typeof usage.output_tokens === "number") details.output = usage.output_tokens;
+	if (typeof usage.input_tokens === "number" && typeof usage.output_tokens === "number") details.total = usage.input_tokens + usage.output_tokens;
+	if (typeof usage.cache_read_input_tokens === "number") details.cache_read_input_tokens = usage.cache_read_input_tokens;
+	return Object.keys(details).length > 0 ? details : void 0;
+}
+
+//#endregion
+//#region src/parser.ts
 function mergeAssistantParts(parts) {
 	if (parts.length === 0) return {};
 	const mergedContent = [];
@@ -149,78 +169,75 @@ function mergeAssistantParts(parts) {
 	else result.content = mergedContent;
 	return result;
 }
-function groupTurns(messages) {
-	const turns = [];
-	let currentUser = null;
-	let currentAssistants = [];
-	let currentParts = [];
-	let currentMsgId = null;
-	let currentToolResults = [];
-	let lastCompleteTurnEnd = 0;
-	function finalizeParts() {
-		if (currentMsgId !== null && currentParts.length > 0) {
-			currentAssistants.push(mergeAssistantParts(currentParts));
-			currentParts = [];
-			currentMsgId = null;
-		}
-	}
-	function finalizeTurn(nextIdx) {
-		finalizeParts();
-		if (currentUser !== null && currentAssistants.length > 0) {
-			turns.push({
-				user: currentUser,
-				assistants: currentAssistants,
-				toolResults: currentToolResults
-			});
-			lastCompleteTurnEnd = nextIdx;
-		}
-	}
-	let idx = 0;
-	for (const msg of messages) {
-		if (msg.isMeta === true) {
-			idx++;
-			continue;
-		}
-		const role = msg.type ?? msg.message?.role ?? void 0;
-		if (role === "user") {
-			if (isToolResult(msg)) {
-				currentToolResults.push(msg);
+var TurnBuilder = class {
+	turns = [];
+	currentUser = null;
+	currentAssistants = [];
+	currentParts = [];
+	currentMsgId = null;
+	currentToolResults = [];
+	lastCompleteTurnEnd = 0;
+	build(messages) {
+		let idx = 0;
+		for (const msg of messages) {
+			if (msg.isMeta === true) {
 				idx++;
 				continue;
 			}
-			finalizeTurn(idx);
-			currentUser = msg;
-			currentAssistants = [];
-			currentParts = [];
-			currentMsgId = null;
-			currentToolResults = [];
-		} else if (role === "assistant") {
-			const msgId = msg.message?.id;
-			if (!msgId) currentParts.push(msg);
-			else if (msgId === currentMsgId) currentParts.push(msg);
-			else {
-				finalizeParts();
-				currentMsgId = msgId;
-				currentParts = [msg];
-			}
+			const role = msg.type ?? msg.message?.role ?? void 0;
+			if (role === "user") this.handleUser(msg, idx);
+			else if (role === "assistant") this.handleAssistant(msg);
+			idx++;
 		}
-		idx++;
+		this.finalizeTurn(messages.length);
+		return {
+			turns: this.turns,
+			consumed: this.lastCompleteTurnEnd
+		};
 	}
-	finalizeTurn(messages.length);
-	return {
-		turns,
-		consumed: lastCompleteTurnEnd
-	};
-}
-function getUsage(msg) {
-	const usage = msg.message?.usage;
-	if (!usage) return void 0;
-	const details = {};
-	if (typeof usage.input_tokens === "number") details.input = usage.input_tokens;
-	if (typeof usage.output_tokens === "number") details.output = usage.output_tokens;
-	if (typeof usage.input_tokens === "number" && typeof usage.output_tokens === "number") details.total = usage.input_tokens + usage.output_tokens;
-	if (typeof usage.cache_read_input_tokens === "number") details.cache_read_input_tokens = usage.cache_read_input_tokens;
-	return Object.keys(details).length > 0 ? details : void 0;
+	handleUser(msg, idx) {
+		if (isToolResult(msg)) {
+			this.currentToolResults.push(msg);
+			return;
+		}
+		this.finalizeTurn(idx);
+		this.currentUser = msg;
+		this.currentAssistants = [];
+		this.currentParts = [];
+		this.currentMsgId = null;
+		this.currentToolResults = [];
+	}
+	handleAssistant(msg) {
+		const msgId = msg.message?.id;
+		if (!msgId) this.currentParts.push(msg);
+		else if (msgId === this.currentMsgId) this.currentParts.push(msg);
+		else {
+			this.finalizeParts();
+			this.currentMsgId = msgId;
+			this.currentParts = [msg];
+		}
+	}
+	finalizeParts() {
+		if (this.currentMsgId !== null && this.currentParts.length > 0) {
+			this.currentAssistants.push(mergeAssistantParts(this.currentParts));
+			this.currentParts = [];
+			this.currentMsgId = null;
+		}
+	}
+	finalizeTurn(nextIdx) {
+		this.finalizeParts();
+		if (this.currentUser !== null && this.currentAssistants.length > 0) {
+			this.turns.push({
+				user: this.currentUser,
+				assistants: this.currentAssistants,
+				toolResults: this.currentToolResults
+			});
+			this.lastCompleteTurnEnd = nextIdx;
+		}
+	}
+};
+function groupTurns(messages) {
+	return new TurnBuilder().build(messages);
 }
 function matchToolResults(toolUseBlocks, toolResults) {
 	return toolUseBlocks.map((block) => {
@@ -246,6 +263,14 @@ function computeTraceEnd(messages) {
 		return latest;
 	}, void 0);
 }
+/**
+* Translates parsed message data into Langfuse generation/tool observations.
+*
+* This function intentionally couples with parser/content helpers (getTextContent,
+* getToolCalls, matchToolResults, etc.) — the tracer acts as a translation layer
+* between the parsed transcript format and the Langfuse SDK. Introducing an
+* intermediate adapter would add complexity without meaningful decoupling.
+*/
 function createGenerationObservation(parentObservation, assistant, index, turn, model, userText, genEnd) {
 	const assistantText = getTextContent(assistant);
 	const assistantModel = assistant.message?.model ?? model;
@@ -337,6 +362,38 @@ async function createTrace(sessionId, turnNum, turn) {
 	} });
 	debug(`Created trace for turn ${turnNum}`);
 }
+function parseNewMessages(transcriptFile, lastLine) {
+	const lines = readFileSync(transcriptFile, "utf8").trim().split("\n");
+	const totalLines = lines.length;
+	if (lastLine >= totalLines) {
+		debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
+		return null;
+	}
+	const messages = [];
+	const lineOffsets = [];
+	for (let i = lastLine; i < totalLines; i++) try {
+		messages.push(JSON.parse(lines[i]));
+		lineOffsets.push(i + 1);
+	} catch (e) {
+		debug(`Skipping line ${i}: ${e}`);
+		continue;
+	}
+	return messages.length > 0 ? {
+		messages,
+		lineOffsets
+	} : null;
+}
+function computeUpdatedState(state, sessionId, turnCount, newTurns, consumed, lineOffsets, lastLine) {
+	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
+	return {
+		...state,
+		[sessionId]: {
+			last_line: newLastLine,
+			turn_count: turnCount + newTurns,
+			updated: (/* @__PURE__ */ new Date()).toISOString()
+		}
+	};
+}
 async function processTranscript(sessionId, transcriptFile, state) {
 	const sessionState = state[sessionId] ?? {
 		last_line: 0,
@@ -344,30 +401,13 @@ async function processTranscript(sessionId, transcriptFile, state) {
 	};
 	const lastLine = sessionState.last_line;
 	const turnCount = sessionState.turn_count;
-	const lines = readFileSync(transcriptFile, "utf8").trim().split("\n");
-	const totalLines = lines.length;
-	if (lastLine >= totalLines) {
-		debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
-		return {
-			turns: 0,
-			updatedState: state
-		};
-	}
-	const newMessages = [];
-	const lineOffsets = [];
-	for (let i = lastLine; i < totalLines; i++) try {
-		newMessages.push(JSON.parse(lines[i]));
-		lineOffsets.push(i + 1);
-	} catch (e) {
-		debug(`Skipping line ${i}: ${e}`);
-		continue;
-	}
-	if (newMessages.length === 0) return {
+	const parsed = parseNewMessages(transcriptFile, lastLine);
+	if (!parsed) return {
 		turns: 0,
 		updatedState: state
 	};
-	debug(`Processing ${newMessages.length} new messages`);
-	const { turns, consumed } = groupTurns(newMessages);
+	debug(`Processing ${parsed.messages.length} new messages`);
+	const { turns, consumed } = groupTurns(parsed.messages);
 	if (turns.length === 0) return {
 		turns: 0,
 		updatedState: state
@@ -375,15 +415,7 @@ async function processTranscript(sessionId, transcriptFile, state) {
 	await propagateAttributes({ sessionId }, async () => {
 		for (let i = 0; i < turns.length; i++) await createTrace(sessionId, turnCount + i + 1, turns[i]);
 	});
-	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
-	const updatedState = {
-		...state,
-		[sessionId]: {
-			last_line: newLastLine,
-			turn_count: turnCount + turns.length,
-			updated: (/* @__PURE__ */ new Date()).toISOString()
-		}
-	};
+	const updatedState = computeUpdatedState(state, sessionId, turnCount, turns.length, consumed, parsed.lineOffsets, lastLine);
 	return {
 		turns: turns.length,
 		updatedState
@@ -440,7 +472,7 @@ async function hook() {
 		log("INFO", `Processed ${turns} turns in ${duration.toFixed(1)}s`);
 		if (duration > HOOK_WARNING_THRESHOLD_SECONDS) log("WARN", `Hook took ${duration.toFixed(1)}s (>3min), consider optimizing`);
 	} catch (e) {
-		log("ERROR", `Failed to process transcript: ${e}`);
+		log("ERROR", `Failed to process transcript: ${e instanceof Error ? e.message : String(e)}`);
 	} finally {
 		await sdk.shutdown();
 	}
