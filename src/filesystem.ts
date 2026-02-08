@@ -40,7 +40,6 @@ export interface PreviousSession {
 export function findPreviousSession(
   transcriptPath: string,
   currentSessionId: string,
-  state: State,
 ): PreviousSession | null {
   try {
     const content = readFileSync(transcriptPath, "utf8");
@@ -54,7 +53,6 @@ export function findPreviousSession(
 
     if (typeof sessionId !== "string") return null;
     if (sessionId === currentSessionId) return null;
-    if (state[sessionId]) return null;
 
     const previousPath = join(dirname(transcriptPath), `${sessionId}.jsonl`);
     if (!existsSync(previousPath)) return null;

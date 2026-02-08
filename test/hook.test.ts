@@ -861,7 +861,7 @@ describe("findPreviousSession", () => {
       },
     ]);
 
-    const result = findPreviousSession(currentPath, "current-session", {});
+    const result = findPreviousSession(currentPath, "current-session");
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe("prev-session");
     expect(result!.transcriptPath).toContain("prev-session.jsonl");
@@ -879,7 +879,7 @@ describe("findPreviousSession", () => {
       },
     ]);
 
-    const result = findPreviousSession(filePath, "sess1", {});
+    const result = findPreviousSession(filePath, "sess1");
     expect(result).toBeNull();
   });
 
@@ -889,11 +889,11 @@ describe("findPreviousSession", () => {
       { sessionId: "sess1", type: "user", content: "hello" },
     ]);
 
-    const result = findPreviousSession(filePath, "sess1", {});
+    const result = findPreviousSession(filePath, "sess1");
     expect(result).toBeNull();
   });
 
-  it("returns null when previous sessionId already in state", () => {
+  it("returns previous session even when previous sessionId already in state", () => {
     setupTranscriptAt("prev-session.jsonl", [
       { sessionId: "prev-session", type: "user", content: "hello" },
     ]);
@@ -902,11 +902,9 @@ describe("findPreviousSession", () => {
       { sessionId: "prev-session", type: "user", content: "msg" },
     ]);
 
-    const state = {
-      "prev-session": { last_line: 5, turn_count: 2, updated: "" },
-    };
-    const result = findPreviousSession(filePath, "current", state);
-    expect(result).toBeNull();
+    const result = findPreviousSession(filePath, "current");
+    expect(result).not.toBeNull();
+    expect(result!.sessionId).toBe("prev-session");
   });
 
   it("returns null when previous session transcript file does not exist", () => {
@@ -915,7 +913,7 @@ describe("findPreviousSession", () => {
       { sessionId: "nonexistent-session", type: "user", content: "msg" },
     ]);
 
-    const result = findPreviousSession(filePath, "current", {});
+    const result = findPreviousSession(filePath, "current");
     expect(result).toBeNull();
   });
 });
@@ -1153,6 +1151,60 @@ describe("processTranscriptWithRecovery", () => {
     );
     expect(result.updatedState["prev-session"].turn_count).toBe(1);
     expect(result.updatedState["current-session"].turn_count).toBe(1);
+  });
+
+  it("recovers cross-session turn when previous session already in state", async () => {
+    // Previous session: fully processed (1 complete turn = 2 lines)
+    const prevPath = setupTranscriptAt("prev-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "prev hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "prev reply" }],
+        },
+      },
+    ]);
+
+    // Current transcript: user from prev session + assistant from current session
+    const currentPath = setupTranscriptAt("current-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "cross-session msg" },
+      {
+        message: {
+          id: "m2",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "cross-session reply" }],
+        },
+      },
+    ]);
+
+    // Previous session already fully processed in state
+    const state = {
+      "prev-session": { last_line: 2, turn_count: 1, updated: "" },
+    };
+
+    const result = await processTranscriptWithRecovery(
+      "current-session",
+      currentPath,
+      "prev-session",
+      prevPath,
+      state,
+    );
+
+    // Turn should be attributed to the previous session
+    expect(mockPropagateAttributes).toHaveBeenCalledWith(
+      { sessionId: "prev-session" },
+      expect.any(Function),
+    );
+    // No trace should be created under the current session
+    expect(mockPropagateAttributes).not.toHaveBeenCalledWith(
+      { sessionId: "current-session" },
+      expect.any(Function),
+    );
+    // Previous session turn count should increment
+    expect(result.updatedState["prev-session"].turn_count).toBe(2);
   });
 
   it("returns zero turns when both transcripts are empty", async () => {

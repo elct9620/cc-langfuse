@@ -108,7 +108,7 @@ export async function hook(): Promise<void> {
   debug(`Processing session: ${sessionId}`);
 
   try {
-    const previous = findPreviousSession(filePath, sessionId, state);
+    const previous = findPreviousSession(filePath, sessionId);
     let result: { turns: number; updatedState: State };
 
     if (previous) {

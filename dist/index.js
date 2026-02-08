@@ -39,7 +39,7 @@ function saveState(state) {
 	mkdirSync(dirname(STATE_FILE), { recursive: true });
 	writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
-function findPreviousSession(transcriptPath, currentSessionId, state) {
+function findPreviousSession(transcriptPath, currentSessionId) {
 	try {
 		const content = readFileSync(transcriptPath, "utf8");
 		const firstNewline = content.indexOf("\n");
@@ -48,7 +48,6 @@ function findPreviousSession(transcriptPath, currentSessionId, state) {
 		const sessionId = JSON.parse(firstLine).sessionId;
 		if (typeof sessionId !== "string") return null;
 		if (sessionId === currentSessionId) return null;
-		if (state[sessionId]) return null;
 		const previousPath = join(dirname(transcriptPath), `${sessionId}.jsonl`);
 		if (!existsSync(previousPath)) return null;
 		return {
@@ -583,7 +582,7 @@ async function hook() {
 	const filePath = input.transcript_path;
 	debug(`Processing session: ${sessionId}`);
 	try {
-		const previous = findPreviousSession(filePath, sessionId, state);
+		const previous = findPreviousSession(filePath, sessionId);
 		let result;
 		if (previous) {
 			debug(`Recovering previous session: ${previous.sessionId}`);
