@@ -99,32 +99,6 @@ function mergeTranscriptMessages(prevFile, prevLastLine, currentFile, currentLas
 		currentLineOffsets: current?.lineOffsets ?? []
 	};
 }
-function computeRecoveryState(state, prevSessionId, prevTotalLines, prevTurnCount, prevNewTurns, currentSessionId, currentLastLine, currentTurnCount, currentNewTurns) {
-	return {
-		...state,
-		[prevSessionId]: {
-			last_line: prevTotalLines,
-			turn_count: prevTurnCount + prevNewTurns,
-			updated: (/* @__PURE__ */ new Date()).toISOString()
-		},
-		[currentSessionId]: {
-			last_line: currentLastLine,
-			turn_count: currentTurnCount + currentNewTurns,
-			updated: (/* @__PURE__ */ new Date()).toISOString()
-		}
-	};
-}
-function computeUpdatedState(state, sessionId, turnCount, newTurns, consumed, lineOffsets, lastLine) {
-	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
-	return {
-		...state,
-		[sessionId]: {
-			last_line: newLastLine,
-			turn_count: turnCount + newTurns,
-			updated: (/* @__PURE__ */ new Date()).toISOString()
-		}
-	};
-}
 
 //#endregion
 //#region src/content.ts
@@ -433,31 +407,35 @@ async function createTrace(sessionId, turnNum, turn) {
 	} });
 	debug(`Created trace for turn ${turnNum}`);
 }
-async function processTranscript(sessionId, transcriptFile, state) {
-	const sessionState = state[sessionId] ?? {
-		last_line: 0,
-		turn_count: 0
-	};
-	const lastLine = sessionState.last_line;
-	const turnCount = sessionState.turn_count;
-	const parsed = parseNewMessages(transcriptFile, lastLine);
-	if (!parsed) return {
-		turns: 0,
-		updatedState: state
-	};
-	debug(`Processing ${parsed.messages.length} new messages`);
-	const { turns, consumed } = groupTurns(parsed.messages);
-	if (turns.length === 0) return {
-		turns: 0,
-		updatedState: state
-	};
-	await propagateAttributes({ sessionId }, async () => {
-		for (let i = 0; i < turns.length; i++) await createTrace(sessionId, turnCount + i + 1, turns[i]);
-	});
-	const updatedState = computeUpdatedState(state, sessionId, turnCount, turns.length, consumed, parsed.lineOffsets, lastLine);
+
+//#endregion
+//#region src/processor.ts
+function computeUpdatedState(params) {
+	const { state, sessionId, turnCount, newTurns, consumed, lineOffsets, lastLine } = params;
+	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
 	return {
-		turns: turns.length,
-		updatedState
+		...state,
+		[sessionId]: {
+			last_line: newLastLine,
+			turn_count: turnCount + newTurns,
+			updated: (/* @__PURE__ */ new Date()).toISOString()
+		}
+	};
+}
+function computeRecoveryState(params) {
+	const { state, prevSessionId, prevTotalLines, prevTurnCount, prevNewTurns, currentSessionId, currentLastLine, currentTurnCount, currentNewTurns } = params;
+	return {
+		...state,
+		[prevSessionId]: {
+			last_line: prevTotalLines,
+			turn_count: prevTurnCount + prevNewTurns,
+			updated: (/* @__PURE__ */ new Date()).toISOString()
+		},
+		[currentSessionId]: {
+			last_line: currentLastLine,
+			turn_count: currentTurnCount + currentNewTurns,
+			updated: (/* @__PURE__ */ new Date()).toISOString()
+		}
 	};
 }
 async function createSessionTraces(sessionId, turns, startingTurnCount) {
@@ -480,6 +458,41 @@ function partitionTurnsBySession(turns, prevSessionId) {
 	return {
 		prevTurns,
 		currentTurns
+	};
+}
+async function processTranscript(sessionId, transcriptFile, state) {
+	const sessionState = state[sessionId] ?? {
+		last_line: 0,
+		turn_count: 0
+	};
+	const lastLine = sessionState.last_line;
+	const turnCount = sessionState.turn_count;
+	const parsed = parseNewMessages(transcriptFile, lastLine);
+	if (!parsed) return {
+		turns: 0,
+		updatedState: state
+	};
+	debug(`Processing ${parsed.messages.length} new messages`);
+	const { turns, consumed } = groupTurns(parsed.messages);
+	if (turns.length === 0) return {
+		turns: 0,
+		updatedState: state
+	};
+	await propagateAttributes({ sessionId }, async () => {
+		for (let i = 0; i < turns.length; i++) await createTrace(sessionId, turnCount + i + 1, turns[i]);
+	});
+	const updatedState = computeUpdatedState({
+		state,
+		sessionId,
+		turnCount,
+		newTurns: turns.length,
+		consumed,
+		lineOffsets: parsed.lineOffsets,
+		lastLine
+	});
+	return {
+		turns: turns.length,
+		updatedState
 	};
 }
 async function processTranscriptWithRecovery(currentSessionId, currentFile, prevSessionId, prevFile, state) {
@@ -508,7 +521,17 @@ async function processTranscriptWithRecovery(currentSessionId, currentFile, prev
 	const prevTotalLines = countTotalLines(prevFile);
 	const currentConsumed = Math.max(0, consumed - merged.prevCount);
 	const currentLastLine = currentConsumed > 0 ? merged.currentLineOffsets[currentConsumed - 1] : currentState.last_line;
-	const updatedState = computeRecoveryState(state, prevSessionId, prevTotalLines, prevState.turn_count, prevTurns.length, currentSessionId, currentLastLine, currentState.turn_count, currentTurns.length);
+	const updatedState = computeRecoveryState({
+		state,
+		prevSessionId,
+		prevTotalLines,
+		prevTurnCount: prevState.turn_count,
+		prevNewTurns: prevTurns.length,
+		currentSessionId,
+		currentLastLine,
+		currentTurnCount: currentState.turn_count,
+		currentNewTurns: currentTurns.length
+	});
 	return {
 		turns: turns.length,
 		updatedState
