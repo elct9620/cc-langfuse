@@ -8,6 +8,7 @@ import {
 import { debug } from "./logger.js";
 import {
   getTextContent,
+  getTimestamp,
   getToolCalls,
   matchToolResults,
   groupTurns,
@@ -27,55 +28,85 @@ async function createTrace(
       : "";
   const model = turn.assistants[0]?.message?.model ?? "claude";
 
-  await startActiveObservation(`Turn ${turnNum}`, async () => {
-    updateActiveTrace({
-      sessionId,
-      input: { role: "user", content: userText },
-      output: { role: "assistant", content: lastAssistantText },
-      metadata: {
-        source: "claude-code",
-        turn_number: turnNum,
-        session_id: sessionId,
-      },
-    });
+  const traceStart = getTimestamp(turn.user);
 
-    for (let i = 0; i < turn.assistants.length; i++) {
-      const assistant = turn.assistants[i];
-      const assistantText = getTextContent(assistant);
-      const assistantModel = assistant.message?.model ?? model;
-      const toolUseBlocks = getToolCalls(assistant);
-      const toolCalls = matchToolResults(toolUseBlocks, turn.toolResults);
+  // Compute traceEnd: latest timestamp across all assistants and toolResults
+  const allMessages = [...turn.assistants, ...turn.toolResults];
+  const traceEnd = allMessages.reduce<Date | undefined>((latest, msg) => {
+    const ts = getTimestamp(msg);
+    if (!ts) return latest;
+    if (!latest || ts > latest) return ts;
+    return latest;
+  }, undefined);
 
-      const generation = startObservation(
-        assistantModel,
-        {
-          model: assistantModel,
-          ...(i === 0 && { input: { role: "user", content: userText } }),
-          output: { role: "assistant", content: assistantText },
-          metadata: { tool_count: toolCalls.length },
+  const hasTraceStart = traceStart !== undefined;
+
+  await startActiveObservation(
+    `Turn ${turnNum}`,
+    async (span) => {
+      updateActiveTrace({
+        sessionId,
+        input: { role: "user", content: userText },
+        output: { role: "assistant", content: lastAssistantText },
+        metadata: {
+          source: "claude-code",
+          turn_number: turnNum,
+          session_id: sessionId,
         },
-        { asType: "generation" },
-      );
+      });
 
-      for (const toolCall of toolCalls) {
-        const tool = generation.startObservation(
-          `Tool: ${toolCall.name}`,
+      for (let i = 0; i < turn.assistants.length; i++) {
+        const assistant = turn.assistants[i];
+        const assistantText = getTextContent(assistant);
+        const assistantModel = assistant.message?.model ?? model;
+        const toolUseBlocks = getToolCalls(assistant);
+        const toolCalls = matchToolResults(toolUseBlocks, turn.toolResults);
+
+        const genStart = getTimestamp(assistant);
+        const nextGenStart =
+          i + 1 < turn.assistants.length
+            ? getTimestamp(turn.assistants[i + 1])
+            : undefined;
+        const genEnd = nextGenStart ?? traceEnd;
+
+        const generation = startObservation(
+          assistantModel,
           {
-            input: toolCall.input,
-            metadata: {
-              tool_name: toolCall.name,
-              tool_id: toolCall.id,
-            },
+            model: assistantModel,
+            ...(i === 0 && { input: { role: "user", content: userText } }),
+            output: { role: "assistant", content: assistantText },
+            metadata: { tool_count: toolCalls.length },
           },
-          { asType: "tool" },
+          { asType: "generation", ...(genStart && { startTime: genStart }) },
         );
-        tool.update({ output: toolCall.output }).end();
-        debug(`Created tool observation for: ${toolCall.name}`);
+
+        for (const toolCall of toolCalls) {
+          const tool = generation.startObservation(
+            `Tool: ${toolCall.name}`,
+            {
+              input: toolCall.input,
+              metadata: {
+                tool_name: toolCall.name,
+                tool_id: toolCall.id,
+              },
+            },
+            { asType: "tool", ...(genStart && { startTime: genStart }) },
+          );
+          tool.update({ output: toolCall.output }).end(toolCall.timestamp);
+          debug(`Created tool observation for: ${toolCall.name}`);
+        }
+
+        generation.end(genEnd);
       }
 
-      generation.end();
-    }
-  });
+      if (traceEnd) {
+        span.end(traceEnd);
+      }
+    },
+    {
+      ...(hasTraceStart && { startTime: traceStart, endOnExit: false }),
+    },
+  );
 
   debug(`Created trace for turn ${turnNum}`);
 }

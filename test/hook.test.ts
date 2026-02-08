@@ -26,11 +26,17 @@ const mockStartObservation = vi.fn().mockImplementation(() => ({
   end: mockObservationEnd,
   startObservation: mockStartChildObservation,
 }));
+const mockSpanEnd = vi.fn();
 const mockStartActiveObservation = vi
   .fn()
-  .mockImplementation(async (_name: string, callback: () => Promise<void>) => {
-    await callback();
-  });
+  .mockImplementation(
+    async (
+      _name: string,
+      callback: (span: { end: typeof mockSpanEnd }) => Promise<void>,
+    ) => {
+      await callback({ end: mockSpanEnd });
+    },
+  );
 const mockUpdateActiveTrace = vi.fn();
 const mockPropagateAttributes = vi
   .fn()
@@ -199,6 +205,7 @@ describe("hook", () => {
     expect(mockStartActiveObservation).toHaveBeenCalledWith(
       "Turn 1",
       expect.any(Function),
+      {},
     );
     expect(mockStartObservation).toHaveBeenCalledWith(
       "claude-sonnet-4-5-20250929",
@@ -378,6 +385,7 @@ describe("processTranscript", () => {
     expect(mockStartActiveObservation).toHaveBeenCalledWith(
       "Turn 2",
       expect.any(Function),
+      {},
     );
   });
 
@@ -398,6 +406,195 @@ describe("processTranscript", () => {
 
     expect(result.updatedState.sess1.last_line).toBe(2);
     expect(result.updatedState.sess1.turn_count).toBe(1);
+  });
+
+  it("should pass startTime to startActiveObservation for trace", async () => {
+    const filePath = setupTranscript([
+      {
+        sessionId: "sess1",
+        type: "user",
+        timestamp: "2025-01-15T10:00:00Z",
+        content: "hello",
+      },
+      {
+        timestamp: "2025-01-15T10:00:05Z",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    expect(mockStartActiveObservation).toHaveBeenCalledWith(
+      "Turn 1",
+      expect.any(Function),
+      {
+        startTime: new Date("2025-01-15T10:00:00Z"),
+        endOnExit: false,
+      },
+    );
+  });
+
+  it("should pass startTime to startObservation for generation", async () => {
+    const filePath = setupTranscript([
+      {
+        sessionId: "sess1",
+        type: "user",
+        timestamp: "2025-01-15T10:00:00Z",
+        content: "hello",
+      },
+      {
+        timestamp: "2025-01-15T10:00:05Z",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    expect(mockStartObservation).toHaveBeenCalledWith(
+      "claude",
+      expect.any(Object),
+      {
+        asType: "generation",
+        startTime: new Date("2025-01-15T10:00:05Z"),
+      },
+    );
+  });
+
+  it("should pass endTime to generation.end()", async () => {
+    const filePath = setupTranscript([
+      {
+        sessionId: "sess1",
+        type: "user",
+        timestamp: "2025-01-15T10:00:00Z",
+        content: "hello",
+      },
+      {
+        timestamp: "2025-01-15T10:00:05Z",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    // Generation end should be called with traceEnd (last message timestamp)
+    expect(mockObservationEnd).toHaveBeenCalledWith(
+      new Date("2025-01-15T10:00:05Z"),
+    );
+  });
+
+  it("should pass startTime and endTime to tool observation", async () => {
+    const filePath = setupTranscript([
+      {
+        sessionId: "sess1",
+        type: "user",
+        timestamp: "2025-01-15T10:00:00Z",
+        content: "read file",
+      },
+      {
+        timestamp: "2025-01-15T10:00:05Z",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [
+            {
+              type: "tool_use",
+              id: "t1",
+              name: "Read",
+              input: { path: "/test" },
+            },
+          ],
+        },
+      },
+      {
+        type: "user",
+        timestamp: "2025-01-15T10:00:10Z",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "file data" },
+        ],
+      },
+      {
+        timestamp: "2025-01-15T10:00:15Z",
+        message: {
+          id: "m2",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "done" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    // Tool should have genStart as startTime
+    expect(mockStartChildObservation).toHaveBeenCalledWith(
+      "Tool: Read",
+      expect.objectContaining({
+        input: { path: "/test" },
+      }),
+      {
+        asType: "tool",
+        startTime: new Date("2025-01-15T10:00:05Z"),
+      },
+    );
+
+    // Tool end should be called with tool_result timestamp
+    expect(mockObservationEnd).toHaveBeenCalledWith(
+      new Date("2025-01-15T10:00:10Z"),
+    );
+  });
+
+  it("should omit timing when messages lack timestamp", async () => {
+    const filePath = setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    // No startTime in options (empty object)
+    expect(mockStartActiveObservation).toHaveBeenCalledWith(
+      "Turn 1",
+      expect.any(Function),
+      {},
+    );
+
+    // No startTime in generation options
+    expect(mockStartObservation).toHaveBeenCalledWith(
+      "claude",
+      expect.any(Object),
+      { asType: "generation" },
+    );
+
+    // generation.end() called with undefined (no endTime)
+    expect(mockObservationEnd).toHaveBeenCalledWith(undefined);
   });
 });
 

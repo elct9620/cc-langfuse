@@ -101,6 +101,10 @@ function isToolUseBlock(item) {
 function isToolResultBlock(item) {
 	return typeof item === "object" && item !== null && item.type === "tool_result";
 }
+function getTimestamp(msg) {
+	const ts = msg.timestamp ?? msg.message?.timestamp;
+	if (typeof ts === "string") return new Date(ts);
+}
 function getContent(msg) {
 	if (msg === null || typeof msg !== "object") return void 0;
 	const record = msg;
@@ -197,11 +201,13 @@ function groupTurns(messages) {
 function matchToolResults(toolUseBlocks, toolResults) {
 	return toolUseBlocks.map((block) => {
 		let output = null;
+		let timestamp;
 		for (const tr of toolResults) {
 			const trContent = getContent(tr);
 			if (!Array.isArray(trContent)) continue;
 			for (const item of trContent) if (isToolResultBlock(item) && item.tool_use_id === block.id) {
 				output = item.content;
+				timestamp = getTimestamp(tr);
 				break;
 			}
 			if (output !== null) break;
@@ -210,7 +216,8 @@ function matchToolResults(toolUseBlocks, toolResults) {
 			id: block.id,
 			name: block.name,
 			input: block.input,
-			output
+			output,
+			timestamp
 		};
 	});
 }
@@ -221,7 +228,15 @@ async function createTrace(sessionId, turnNum, turn) {
 	const userText = getTextContent(turn.user);
 	const lastAssistantText = turn.assistants.length > 0 ? getTextContent(turn.assistants[turn.assistants.length - 1]) : "";
 	const model = turn.assistants[0]?.message?.model ?? "claude";
-	await startActiveObservation(`Turn ${turnNum}`, async () => {
+	const traceStart = getTimestamp(turn.user);
+	const traceEnd = [...turn.assistants, ...turn.toolResults].reduce((latest, msg) => {
+		const ts = getTimestamp(msg);
+		if (!ts) return latest;
+		if (!latest || ts > latest) return ts;
+		return latest;
+	}, void 0);
+	const hasTraceStart = traceStart !== void 0;
+	await startActiveObservation(`Turn ${turnNum}`, async (span) => {
 		updateActiveTrace({
 			sessionId,
 			input: {
@@ -243,6 +258,8 @@ async function createTrace(sessionId, turnNum, turn) {
 			const assistantText = getTextContent(assistant);
 			const assistantModel = assistant.message?.model ?? model;
 			const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
+			const genStart = getTimestamp(assistant);
+			const genEnd = (i + 1 < turn.assistants.length ? getTimestamp(turn.assistants[i + 1]) : void 0) ?? traceEnd;
 			const generation = startObservation(assistantModel, {
 				model: assistantModel,
 				...i === 0 && { input: {
@@ -254,7 +271,10 @@ async function createTrace(sessionId, turnNum, turn) {
 					content: assistantText
 				},
 				metadata: { tool_count: toolCalls.length }
-			}, { asType: "generation" });
+			}, {
+				asType: "generation",
+				...genStart && { startTime: genStart }
+			});
 			for (const toolCall of toolCalls) {
 				generation.startObservation(`Tool: ${toolCall.name}`, {
 					input: toolCall.input,
@@ -262,12 +282,19 @@ async function createTrace(sessionId, turnNum, turn) {
 						tool_name: toolCall.name,
 						tool_id: toolCall.id
 					}
-				}, { asType: "tool" }).update({ output: toolCall.output }).end();
+				}, {
+					asType: "tool",
+					...genStart && { startTime: genStart }
+				}).update({ output: toolCall.output }).end(toolCall.timestamp);
 				debug(`Created tool observation for: ${toolCall.name}`);
 			}
-			generation.end();
+			generation.end(genEnd);
 		}
-	});
+		if (traceEnd) span.end(traceEnd);
+	}, { ...hasTraceStart && {
+		startTime: traceStart,
+		endOnExit: false
+	} });
 	debug(`Created trace for turn ${turnNum}`);
 }
 async function processTranscript(sessionId, transcriptFile, state) {

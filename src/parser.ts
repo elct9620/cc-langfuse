@@ -50,12 +50,19 @@ export interface ToolCall {
   name: string;
   input: unknown;
   output: unknown;
+  timestamp?: Date;
 }
 
 export interface Turn {
   user: Message;
   assistants: Message[];
   toolResults: Message[];
+}
+
+export function getTimestamp(msg: Message): Date | undefined {
+  const ts = msg.timestamp ?? msg.message?.timestamp;
+  if (typeof ts === "string") return new Date(ts);
+  return undefined;
 }
 
 export function getContent(msg: unknown): unknown {
@@ -189,17 +196,25 @@ export function matchToolResults(
 ): ToolCall[] {
   return toolUseBlocks.map((block) => {
     let output: unknown = null;
+    let timestamp: Date | undefined;
     for (const tr of toolResults) {
       const trContent = getContent(tr);
       if (!Array.isArray(trContent)) continue;
       for (const item of trContent) {
         if (isToolResultBlock(item) && item.tool_use_id === block.id) {
           output = item.content;
+          timestamp = getTimestamp(tr);
           break;
         }
       }
       if (output !== null) break;
     }
-    return { id: block.id, name: block.name, input: block.input, output };
+    return {
+      id: block.id,
+      name: block.name,
+      input: block.input,
+      output,
+      timestamp,
+    };
   });
 }

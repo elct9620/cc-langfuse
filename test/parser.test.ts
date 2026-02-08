@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   getContent,
+  getTimestamp,
   isToolResult,
   getToolCalls,
   getTextContent,
@@ -118,9 +119,7 @@ describe("mergeAssistantParts", () => {
       {
         message: {
           id: "m1",
-          content: [
-            { type: "tool_use", id: "t1", name: "Read", input: {} },
-          ],
+          content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }],
         },
       },
     ];
@@ -225,9 +224,7 @@ describe("groupTurns", () => {
         message: {
           id: "m1",
           role: "assistant",
-          content: [
-            { type: "tool_use", id: "t1", name: "Read", input: {} },
-          ],
+          content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }],
         },
       },
     ];
@@ -247,6 +244,37 @@ describe("groupTurns", () => {
   it("returns empty array for only user message without assistant", () => {
     const messages = [{ type: "user", content: "hi" }];
     expect(groupTurns(messages)).toEqual([]);
+  });
+});
+
+describe("getTimestamp", () => {
+  it("should return Date from top-level timestamp field", () => {
+    const msg = { timestamp: "2025-01-15T10:30:00Z", type: "user" };
+    const result = getTimestamp(msg);
+    expect(result).toBeInstanceOf(Date);
+    expect(result!.toISOString()).toBe("2025-01-15T10:30:00.000Z");
+  });
+
+  it("should return Date from nested message.timestamp field", () => {
+    const msg = {
+      message: {
+        role: "assistant",
+        timestamp: "2025-01-15T10:31:00Z",
+      },
+    };
+    const result = getTimestamp(msg);
+    expect(result).toBeInstanceOf(Date);
+    expect(result!.toISOString()).toBe("2025-01-15T10:31:00.000Z");
+  });
+
+  it("should return undefined when no timestamp field exists", () => {
+    const msg = { type: "user", content: "hello" };
+    expect(getTimestamp(msg)).toBeUndefined();
+  });
+
+  it("should return undefined for non-string timestamp", () => {
+    const msg = { timestamp: 12345 };
+    expect(getTimestamp(msg)).toBeUndefined();
   });
 });
 
@@ -273,12 +301,14 @@ describe("matchToolResults", () => {
       name: "Read",
       input: { path: "/a" },
       output: "file data",
+      timestamp: undefined,
     });
     expect(calls[1]).toEqual({
       id: "t2",
       name: "Write",
       input: { path: "/b" },
       output: "ok",
+      timestamp: undefined,
     });
   });
 
@@ -290,5 +320,39 @@ describe("matchToolResults", () => {
     const calls = matchToolResults(toolUseBlocks, []);
     expect(calls).toHaveLength(1);
     expect(calls[0].output).toBeNull();
+  });
+
+  it("should include timestamp from tool result message", () => {
+    const toolUseBlocks: ToolUseBlock[] = [
+      { type: "tool_use", id: "t1", name: "Read", input: { path: "/a" } },
+    ];
+    const toolResults = [
+      {
+        type: "user",
+        timestamp: "2025-01-15T10:32:00Z",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "file data" },
+        ],
+      },
+    ];
+
+    const calls = matchToolResults(toolUseBlocks, toolResults);
+    expect(calls[0].timestamp).toBeInstanceOf(Date);
+    expect(calls[0].timestamp!.toISOString()).toBe("2025-01-15T10:32:00.000Z");
+  });
+
+  it("should return undefined timestamp when tool result message has no timestamp", () => {
+    const toolUseBlocks: ToolUseBlock[] = [
+      { type: "tool_use", id: "t1", name: "Read", input: {} },
+    ];
+    const toolResults = [
+      {
+        type: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
+      },
+    ];
+
+    const calls = matchToolResults(toolUseBlocks, toolResults);
+    expect(calls[0].timestamp).toBeUndefined();
   });
 });
