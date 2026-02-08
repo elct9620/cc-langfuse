@@ -42,14 +42,17 @@ function saveState(state) {
 
 //#endregion
 //#region src/content.ts
+function isBlockOfType(item, type) {
+	return typeof item === "object" && item !== null && item.type === type;
+}
 function isTextBlock(item) {
-	return typeof item === "object" && item !== null && item.type === "text";
+	return isBlockOfType(item, "text");
 }
 function isToolUseBlock(item) {
-	return typeof item === "object" && item !== null && item.type === "tool_use";
+	return isBlockOfType(item, "tool_use");
 }
 function isToolResultBlock(item) {
-	return typeof item === "object" && item !== null && item.type === "tool_result";
+	return isBlockOfType(item, "tool_result");
 }
 function getTimestamp(msg) {
 	const ts = msg.timestamp ?? msg.message?.timestamp;
@@ -112,12 +115,34 @@ function mergeAssistantParts(parts) {
 	else result.content = mergedContent;
 	return result;
 }
+var AssistantPartAccumulator = class {
+	parts = [];
+	msgId = null;
+	add(msg) {
+		const id = msg.message?.id;
+		if (!id || id === this.msgId) {
+			this.parts.push(msg);
+			if (id) this.msgId = id;
+			return;
+		}
+		const flushed = this.flush();
+		this.msgId = id;
+		this.parts = [msg];
+		return flushed;
+	}
+	flush() {
+		if (this.msgId === null || this.parts.length === 0) return void 0;
+		const merged = mergeAssistantParts(this.parts);
+		this.parts = [];
+		this.msgId = null;
+		return merged;
+	}
+};
 var TurnBuilder = class {
 	turns = [];
 	currentUser = null;
 	currentAssistants = [];
-	currentParts = [];
-	currentMsgId = null;
+	accumulator = new AssistantPartAccumulator();
 	currentToolResults = [];
 	lastCompleteTurnEnd = 0;
 	build(messages) {
@@ -146,29 +171,16 @@ var TurnBuilder = class {
 		this.finalizeTurn(idx);
 		this.currentUser = msg;
 		this.currentAssistants = [];
-		this.currentParts = [];
-		this.currentMsgId = null;
+		this.accumulator = new AssistantPartAccumulator();
 		this.currentToolResults = [];
 	}
 	handleAssistant(msg) {
-		const msgId = msg.message?.id;
-		if (!msgId) this.currentParts.push(msg);
-		else if (msgId === this.currentMsgId) this.currentParts.push(msg);
-		else {
-			this.finalizeParts();
-			this.currentMsgId = msgId;
-			this.currentParts = [msg];
-		}
-	}
-	finalizeParts() {
-		if (this.currentMsgId !== null && this.currentParts.length > 0) {
-			this.currentAssistants.push(mergeAssistantParts(this.currentParts));
-			this.currentParts = [];
-			this.currentMsgId = null;
-		}
+		const merged = this.accumulator.add(msg);
+		if (merged) this.currentAssistants.push(merged);
 	}
 	finalizeTurn(nextIdx) {
-		this.finalizeParts();
+		const remaining = this.accumulator.flush();
+		if (remaining) this.currentAssistants.push(remaining);
 		if (this.currentUser !== null && this.currentAssistants.length > 0) {
 			this.turns.push({
 				user: this.currentUser,
@@ -182,16 +194,26 @@ var TurnBuilder = class {
 function groupTurns(messages) {
 	return new TurnBuilder().build(messages);
 }
+function findToolResultBlock(toolResults, toolUseId) {
+	for (const msg of toolResults) {
+		const content = getContent(msg);
+		if (!Array.isArray(content)) continue;
+		const block = content.find((item) => isToolResultBlock(item) && item.tool_use_id === toolUseId);
+		if (block) return {
+			block,
+			message: msg
+		};
+	}
+}
 function matchToolResults(toolUseBlocks, toolResults) {
 	return toolUseBlocks.map((block) => {
-		const match = toolResults.filter((tr) => Array.isArray(getContent(tr))).find((tr) => getContent(tr).some((item) => isToolResultBlock(item) && item.tool_use_id === block.id));
-		const matchedItem = match ? getContent(match).find((item) => isToolResultBlock(item) && item.tool_use_id === block.id) : void 0;
+		const match = findToolResultBlock(toolResults, block.id);
 		return {
 			id: block.id,
 			name: block.name,
 			input: block.input,
-			output: matchedItem?.content ?? null,
-			timestamp: match ? getTimestamp(match) : void 0
+			output: match?.block.content ?? null,
+			timestamp: match ? getTimestamp(match.message) : void 0
 		};
 	});
 }
@@ -206,15 +228,24 @@ function computeTraceEnd(messages) {
 		return latest;
 	}, void 0);
 }
-/**
-* Translates parsed message data into Langfuse generation/tool observations.
-*
-* This function intentionally couples with parser/content helpers (getTextContent,
-* getToolCalls, matchToolResults, etc.) — the tracer acts as a translation layer
-* between the parsed transcript format and the Langfuse SDK. Introducing an
-* intermediate adapter would add complexity without meaningful decoupling.
-*/
-function createGenerationObservation(parentObservation, assistant, index, turn, model, userText, genEnd) {
+function createToolObservations(parentObservation, toolCalls, genStart) {
+	for (const toolCall of toolCalls) {
+		startObservation(`Tool: ${toolCall.name}`, {
+			input: toolCall.input,
+			metadata: {
+				tool_name: toolCall.name,
+				tool_id: toolCall.id
+			}
+		}, {
+			asType: "tool",
+			...genStart && { startTime: genStart },
+			parentSpanContext: parentObservation.otelSpan.spanContext()
+		}).update({ output: toolCall.output }).end(toolCall.timestamp);
+		debug(`Created tool observation for: ${toolCall.name}`);
+	}
+}
+function createGenerationObservation(ctx) {
+	const { parentObservation, assistant, index, turn, model, userText, genEnd } = ctx;
 	const assistantText = getTextContent(assistant);
 	const assistantModel = assistant.message?.model ?? model;
 	const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
@@ -237,28 +268,34 @@ function createGenerationObservation(parentObservation, assistant, index, turn, 
 		...genStart && { startTime: genStart },
 		parentSpanContext: parentObservation.otelSpan.spanContext()
 	});
-	for (const toolCall of toolCalls) {
-		startObservation(`Tool: ${toolCall.name}`, {
-			input: toolCall.input,
-			metadata: {
-				tool_name: toolCall.name,
-				tool_id: toolCall.id
-			}
-		}, {
-			asType: "tool",
-			...genStart && { startTime: genStart },
-			parentSpanContext: generation.otelSpan.spanContext()
-		}).update({ output: toolCall.output }).end(toolCall.timestamp);
-		debug(`Created tool observation for: ${toolCall.name}`);
-	}
+	createToolObservations(generation, toolCalls, genStart);
 	generation.end(genEnd);
 }
+function computeTraceContext(turn) {
+	return {
+		userText: getTextContent(turn.user),
+		lastAssistantText: turn.assistants.length > 0 ? getTextContent(turn.assistants[turn.assistants.length - 1]) : "",
+		model: turn.assistants[0]?.message?.model ?? "claude",
+		traceStart: getTimestamp(turn.user),
+		traceEnd: computeTraceEnd([...turn.assistants, ...turn.toolResults])
+	};
+}
+function createGenerations(parentObservation, turn, model, userText) {
+	for (let i = 0; i < turn.assistants.length; i++) {
+		const nextGenStart = i + 1 < turn.assistants.length ? getTimestamp(turn.assistants[i + 1]) : void 0;
+		createGenerationObservation({
+			parentObservation,
+			assistant: turn.assistants[i],
+			index: i,
+			turn,
+			model,
+			userText,
+			genEnd: nextGenStart ?? /* @__PURE__ */ new Date()
+		});
+	}
+}
 async function createTrace(sessionId, turnNum, turn) {
-	const userText = getTextContent(turn.user);
-	const lastAssistantText = turn.assistants.length > 0 ? getTextContent(turn.assistants[turn.assistants.length - 1]) : "";
-	const model = turn.assistants[0]?.message?.model ?? "claude";
-	const traceStart = getTimestamp(turn.user);
-	const traceEnd = computeTraceEnd([...turn.assistants, ...turn.toolResults]);
+	const { userText, lastAssistantText, model, traceStart, traceEnd } = computeTraceContext(turn);
 	const hasTraceStart = traceStart !== void 0;
 	await startActiveObservation(`Turn ${turnNum}`, async (span) => {
 		updateActiveTrace({
@@ -291,10 +328,7 @@ async function createTrace(sessionId, turnNum, turn) {
 			...hasTraceStart && { startTime: traceStart },
 			parentSpanContext: span.otelSpan.spanContext()
 		});
-		for (let i = 0; i < turn.assistants.length; i++) {
-			const nextGenStart = i + 1 < turn.assistants.length ? getTimestamp(turn.assistants[i + 1]) : void 0;
-			createGenerationObservation(rootSpan, turn.assistants[i], i, turn, model, userText, nextGenStart ?? /* @__PURE__ */ new Date());
-		}
+		createGenerations(rootSpan, turn, model, userText);
 		if (traceEnd) {
 			rootSpan.end(traceEnd);
 			span.end(traceEnd);
