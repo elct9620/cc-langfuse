@@ -60,6 +60,38 @@ function findPreviousSession(transcriptPath, currentSessionId, state) {
 		return null;
 	}
 }
+function parseNewMessages(transcriptFile, lastLine) {
+	const lines = readFileSync(transcriptFile, "utf8").trim().split("\n");
+	const totalLines = lines.length;
+	if (lastLine >= totalLines) {
+		debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
+		return null;
+	}
+	const messages = [];
+	const lineOffsets = [];
+	for (let i = lastLine; i < totalLines; i++) try {
+		messages.push(JSON.parse(lines[i]));
+		lineOffsets.push(i + 1);
+	} catch (e) {
+		debug(`Skipping line ${i}: ${e}`);
+		continue;
+	}
+	return messages.length > 0 ? {
+		messages,
+		lineOffsets
+	} : null;
+}
+function computeUpdatedState(state, sessionId, turnCount, newTurns, consumed, lineOffsets, lastLine) {
+	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
+	return {
+		...state,
+		[sessionId]: {
+			last_line: newLastLine,
+			turn_count: turnCount + newTurns,
+			updated: (/* @__PURE__ */ new Date()).toISOString()
+		}
+	};
+}
 
 //#endregion
 //#region src/content.ts
@@ -360,38 +392,6 @@ async function createTrace(sessionId, turnNum, turn) {
 	} });
 	debug(`Created trace for turn ${turnNum}`);
 }
-function parseNewMessages(transcriptFile, lastLine) {
-	const lines = readFileSync(transcriptFile, "utf8").trim().split("\n");
-	const totalLines = lines.length;
-	if (lastLine >= totalLines) {
-		debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
-		return null;
-	}
-	const messages = [];
-	const lineOffsets = [];
-	for (let i = lastLine; i < totalLines; i++) try {
-		messages.push(JSON.parse(lines[i]));
-		lineOffsets.push(i + 1);
-	} catch (e) {
-		debug(`Skipping line ${i}: ${e}`);
-		continue;
-	}
-	return messages.length > 0 ? {
-		messages,
-		lineOffsets
-	} : null;
-}
-function computeUpdatedState(state, sessionId, turnCount, newTurns, consumed, lineOffsets, lastLine) {
-	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
-	return {
-		...state,
-		[sessionId]: {
-			last_line: newLastLine,
-			turn_count: turnCount + newTurns,
-			updated: (/* @__PURE__ */ new Date()).toISOString()
-		}
-	};
-}
 async function processTranscript(sessionId, transcriptFile, state) {
 	const sessionState = state[sessionId] ?? {
 		last_line: 0,
@@ -438,6 +438,32 @@ async function readHookInput() {
 		return null;
 	}
 }
+function initializeSDK(config) {
+	const spanProcessor = new LangfuseSpanProcessor({
+		exportMode: "immediate",
+		publicKey: config.publicKey,
+		secretKey: config.secretKey,
+		baseUrl: config.baseUrl
+	});
+	const sdk = new NodeSDK({ spanProcessors: [spanProcessor] });
+	sdk.start();
+	return {
+		sdk,
+		spanProcessor
+	};
+}
+async function recoverPreviousSession(filePath, sessionId, state) {
+	const previous = findPreviousSession(filePath, sessionId, state);
+	if (!previous) return state;
+	debug(`Recovering previous session: ${previous.sessionId}`);
+	try {
+		const { updatedState } = await processTranscript(previous.sessionId, previous.transcriptPath, state);
+		return updatedState;
+	} catch (e) {
+		log("ERROR", `Failed to recover previous session: ${e instanceof Error ? e.message : String(e)}`);
+		return state;
+	}
+}
 function resolveEnvVars() {
 	const publicKey = process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY;
 	const secretKey = process.env.CC_LANGFUSE_SECRET_KEY ?? process.env.LANGFUSE_SECRET_KEY;
@@ -461,14 +487,7 @@ async function hook() {
 		log("ERROR", "Langfuse API keys not set (CC_LANGFUSE_PUBLIC_KEY / CC_LANGFUSE_SECRET_KEY)");
 		return;
 	}
-	const spanProcessor = new LangfuseSpanProcessor({
-		exportMode: "immediate",
-		publicKey: config.publicKey,
-		secretKey: config.secretKey,
-		baseUrl: config.baseUrl
-	});
-	const sdk = new NodeSDK({ spanProcessors: [spanProcessor] });
-	sdk.start();
+	const { sdk, spanProcessor } = initializeSDK(config);
 	const state = loadState();
 	const input = await readHookInput();
 	if (!input) {
@@ -479,17 +498,7 @@ async function hook() {
 	const sessionId = input.session_id;
 	const filePath = input.transcript_path;
 	debug(`Processing session: ${sessionId}`);
-	let currentState = state;
-	const previous = findPreviousSession(filePath, sessionId, currentState);
-	if (previous) {
-		debug(`Recovering previous session: ${previous.sessionId}`);
-		try {
-			const { updatedState } = await processTranscript(previous.sessionId, previous.transcriptPath, currentState);
-			currentState = updatedState;
-		} catch (e) {
-			log("ERROR", `Failed to recover previous session: ${e instanceof Error ? e.message : String(e)}`);
-		}
-	}
+	const currentState = await recoverPreviousSession(filePath, sessionId, state);
 	try {
 		const { turns, updatedState } = await processTranscript(sessionId, filePath, currentState);
 		saveState(updatedState);
