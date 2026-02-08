@@ -72,15 +72,16 @@ Triggered by Claude Code after each assistant response via `pnpm dlx`.
 
 Exits immediately if `TRACE_TO_LANGFUSE` is not `"true"`.
 
-| Step | Action                                                                          |
-| ---- | ------------------------------------------------------------------------------- |
-| 1    | Check `TRACE_TO_LANGFUSE` env var; exit if not enabled                          |
-| 2    | Locate the most recently modified `.jsonl` transcript in `~/.claude/projects/`  |
-| 3    | Load state from `~/.claude/state/cc-langfuse_state.json`                        |
-| 4    | Parse new lines from the transcript since last processed line                   |
-| 5    | Group messages into turns (user message -> assistant responses -> tool results) |
-| 6    | Create Langfuse traces and spans for each turn                                  |
-| 7    | Update state file with new line count                                           |
+| Step | Action                                                                                                 |
+| ---- | ------------------------------------------------------------------------------------------------------ |
+| 1    | Check `TRACE_TO_LANGFUSE` env var; exit if not enabled                                                 |
+| 2    | Read `session_id` and `transcript_path` from stdin JSON                                                |
+| 3    | Load state from `~/.claude/state/cc-langfuse_state.json`                                               |
+| 4    | Check transcript first line for previous session ID; if found and unprocessed, recover its turns first |
+| 5    | Parse new lines from the transcript since last processed line                                          |
+| 6    | Group messages into turns (user message -> assistant responses -> tool results)                        |
+| 7    | Create Langfuse traces and spans for each turn                                                         |
+| 8    | Update state file with new line count                                                                  |
 
 ### Trace Structure in Langfuse
 

@@ -1,6 +1,6 @@
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { propagateAttributes, startActiveObservation, startObservation, updateActiveTrace } from "@langfuse/tracing";
@@ -38,6 +38,27 @@ function loadState() {
 function saveState(state) {
 	mkdirSync(dirname(STATE_FILE), { recursive: true });
 	writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+}
+function findPreviousSession(transcriptPath, currentSessionId, state) {
+	try {
+		const content = readFileSync(transcriptPath, "utf8");
+		const firstNewline = content.indexOf("\n");
+		const firstLine = firstNewline === -1 ? content : content.slice(0, firstNewline);
+		if (!firstLine) return null;
+		const sessionId = JSON.parse(firstLine).sessionId;
+		if (typeof sessionId !== "string") return null;
+		if (sessionId === currentSessionId) return null;
+		if (state[sessionId]) return null;
+		const previousPath = join(dirname(transcriptPath), `${sessionId}.jsonl`);
+		if (!existsSync(previousPath)) return null;
+		return {
+			sessionId,
+			transcriptPath: previousPath
+		};
+	} catch {
+		debug("Failed to detect previous session from transcript first line");
+		return null;
+	}
 }
 
 //#endregion
@@ -458,8 +479,19 @@ async function hook() {
 	const sessionId = input.session_id;
 	const filePath = input.transcript_path;
 	debug(`Processing session: ${sessionId}`);
+	let currentState = state;
+	const previous = findPreviousSession(filePath, sessionId, currentState);
+	if (previous) {
+		debug(`Recovering previous session: ${previous.sessionId}`);
+		try {
+			const { updatedState } = await processTranscript(previous.sessionId, previous.transcriptPath, currentState);
+			currentState = updatedState;
+		} catch (e) {
+			log("ERROR", `Failed to recover previous session: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
 	try {
-		const { turns, updatedState } = await processTranscript(sessionId, filePath, state);
+		const { turns, updatedState } = await processTranscript(sessionId, filePath, currentState);
 		saveState(updatedState);
 		await spanProcessor.forceFlush();
 		const duration = (Date.now() - scriptStart) / 1e3;

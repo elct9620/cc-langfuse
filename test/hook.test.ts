@@ -111,7 +111,8 @@ afterEach(() => {
 // Import after mocks
 const { hook } = await import("../src/index.js");
 const { processTranscript } = await import("../src/tracer.js");
-const { loadState, saveState } = await import("../src/filesystem.js");
+const { loadState, saveState, findPreviousSession } =
+  await import("../src/filesystem.js");
 const { NodeSDK } = await import("@opentelemetry/sdk-node");
 const { LangfuseSpanProcessor } = await import("@langfuse/otel");
 
@@ -811,6 +812,215 @@ describe("processTranscript", () => {
 
     // Last generation ends at current time (new Date())
     expect(mockObservationEnd).toHaveBeenCalledWith(expect.any(Date));
+  });
+});
+
+function setupTranscriptAt(fileName: string, lines: object[]): string {
+  const projectDir = join(testDir, ".claude", "projects", "test-project");
+  mkdirSync(projectDir, { recursive: true });
+  const filePath = join(projectDir, fileName);
+  writeFileSync(filePath, lines.map((l) => JSON.stringify(l)).join("\n"));
+  return filePath;
+}
+
+describe("findPreviousSession", () => {
+  beforeEach(() => {
+    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns previous session when first line has different sessionId", () => {
+    // Create previous session transcript
+    setupTranscriptAt("prev-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    // Current transcript starts with previous session's last message
+    const currentPath = setupTranscriptAt("current-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "plan mode msg" },
+      { sessionId: "current-session", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m2",
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const result = findPreviousSession(currentPath, "current-session", {});
+    expect(result).not.toBeNull();
+    expect(result!.sessionId).toBe("prev-session");
+    expect(result!.transcriptPath).toContain("prev-session.jsonl");
+  });
+
+  it("returns null when first line sessionId matches current session", () => {
+    const filePath = setupTranscriptAt("sess1.jsonl", [
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const result = findPreviousSession(filePath, "sess1", {});
+    expect(result).toBeNull();
+  });
+
+  it("returns null when first line has no sessionId (file-history-snapshot)", () => {
+    const filePath = setupTranscriptAt("sess1.jsonl", [
+      { type: "file-history-snapshot", messageId: "m0", snapshot: {} },
+      { sessionId: "sess1", type: "user", content: "hello" },
+    ]);
+
+    const result = findPreviousSession(filePath, "sess1", {});
+    expect(result).toBeNull();
+  });
+
+  it("returns null when previous sessionId already in state", () => {
+    setupTranscriptAt("prev-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "hello" },
+    ]);
+
+    const filePath = setupTranscriptAt("current.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "msg" },
+    ]);
+
+    const state = {
+      "prev-session": { last_line: 5, turn_count: 2, updated: "" },
+    };
+    const result = findPreviousSession(filePath, "current", state);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when previous session transcript file does not exist", () => {
+    // Don't create the prev-session.jsonl file
+    const filePath = setupTranscriptAt("current.jsonl", [
+      { sessionId: "nonexistent-session", type: "user", content: "msg" },
+    ]);
+
+    const result = findPreviousSession(filePath, "current", {});
+    expect(result).toBeNull();
+  });
+});
+
+describe("orphan session recovery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    for (const key of LANGFUSE_ENV_KEYS) {
+      vi.stubEnv(key, "");
+    }
+    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers previous session before processing current session", async () => {
+    vi.stubEnv("TRACE_TO_LANGFUSE", "true");
+    vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
+    vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
+
+    // Previous session transcript
+    setupTranscriptAt("prev-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "prev hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "prev hi" }],
+        },
+      },
+    ]);
+
+    // Current transcript starts with prev session's message
+    const currentPath = setupTranscriptAt("current-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "leftover" },
+      { sessionId: "current-session", type: "user", content: "current hello" },
+      {
+        message: {
+          id: "m2",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "current hi" }],
+        },
+      },
+    ]);
+
+    mockStdin({
+      session_id: "current-session",
+      transcript_path: currentPath,
+    });
+
+    await hook();
+
+    // Should have processed both sessions (2 turns total: 1 prev + 1 current)
+    expect(mockStartActiveObservation).toHaveBeenCalledTimes(2);
+    expect(mockStartActiveObservation).toHaveBeenCalledWith(
+      "Turn 1",
+      expect.any(Function),
+      {},
+    );
+  });
+
+  it("continues processing current session when previous session recovery fails", async () => {
+    vi.stubEnv("TRACE_TO_LANGFUSE", "true");
+    vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
+    vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
+
+    // Previous session transcript with invalid content (will cause processTranscript to have 0 turns)
+    setupTranscriptAt("prev-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "orphaned" },
+      // No assistant response — incomplete turn, 0 turns processed
+    ]);
+
+    // Current transcript
+    const currentPath = setupTranscriptAt("current-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "leftover" },
+      { sessionId: "current-session", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    mockStdin({
+      session_id: "current-session",
+      transcript_path: currentPath,
+    });
+
+    await hook();
+
+    // Current session should still be processed (1 turn)
+    expect(mockStartActiveObservation).toHaveBeenCalledWith(
+      "Turn 1",
+      expect.any(Function),
+      {},
+    );
+    expect(mockSdkShutdown).toHaveBeenCalled();
   });
 });
 

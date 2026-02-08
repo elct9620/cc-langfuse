@@ -8,7 +8,7 @@ Claude Code records every session as a `.jsonl` (JSON Lines) file. Each line is 
 - **File naming:** `<session-uuid>.jsonl`
 - **Format:** one JSON object per line, no trailing comma
 
-The cc-langfuse hook locates the most recently modified `.jsonl` file and parses new lines since the last processed position.
+The cc-langfuse hook receives `session_id` and `transcript_path` via stdin JSON from the Claude Code Stop hook, then parses new lines since the last processed position.
 
 ## 2. Message Types
 
@@ -345,12 +345,13 @@ State is persisted at `~/.claude/state/cc-langfuse_state.json`.
 
 ### Processing Flow
 
-1. Read all lines from the transcript file.
-2. Skip lines `0` to `last_line - 1` (already processed).
-3. Parse remaining lines as JSON. Lines that fail to parse are skipped (logged).
-4. `groupTurns()` groups parsed messages into Turns, returning `consumed` count.
-5. Create Langfuse traces for each complete Turn.
-6. Update `last_line` to `lineOffsets[consumed - 1]` — the 1-based line number of the last message in the last complete turn.
+1. Check transcript first line for a previous session ID (see [Session Transitions](#10-session-transitions)). If found and unprocessed, recover its turns first.
+2. Read all lines from the transcript file.
+3. Skip lines `0` to `last_line - 1` (already processed).
+4. Parse remaining lines as JSON. Lines that fail to parse are skipped (logged).
+5. `groupTurns()` groups parsed messages into Turns, returning `consumed` count.
+6. Create Langfuse traces for each complete Turn.
+7. Update `last_line` to `lineOffsets[consumed - 1]` — the 1-based line number of the last message in the last complete turn.
 
 ### lineOffsets
 
@@ -409,3 +410,32 @@ If an assistant message lacks `message.id`, it is added to `currentParts` withou
 ### Meta Messages Interleaved
 
 Meta messages (`isMeta: true`) can appear anywhere in the sequence — as user messages or assistant messages. They are completely ignored by the grouping logic, as if they were not in the transcript at all.
+
+## 10. Session Transitions
+
+When Claude Code exits Plan Mode or undergoes certain session transitions, the session ID changes but the Stop hook for the previous session is **not triggered**. This leaves the previous session's turns unprocessed.
+
+### Detection
+
+The transcript's **first line** reveals whether a session transition occurred:
+
+**Normal session** — first line is `file-history-snapshot` (no `sessionId` field):
+
+```json
+{"type": "file-history-snapshot", "messageId": "...", "snapshot": {...}}
+```
+
+**Continuation session** (e.g. after Plan Mode) — first line carries the **previous session's** `sessionId`. The current session's messages begin from line 2 or 3 onward:
+
+```json
+{"parentUuid": "...", "sessionId": "<previous-session-id>", "type": "user", ...}
+```
+
+### Recovery
+
+The hook detects orphaned previous sessions via `findPreviousSession()`:
+
+1. Read the first line of the current transcript.
+2. Parse the `sessionId` field.
+3. If `sessionId` differs from the current session ID and is not already in state, the previous session's transcript (at `{directory}/{sessionId}.jsonl`) is processed first.
+4. Recovery failure does not block processing of the current session (independent try/catch).
