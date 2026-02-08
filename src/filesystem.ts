@@ -93,3 +93,24 @@ export function parseNewMessages(
 
   return messages.length > 0 ? { messages, lineOffsets } : null;
 }
+
+export function computeUpdatedState(
+  state: State,
+  sessionId: string,
+  turnCount: number,
+  newTurns: number,
+  consumed: number,
+  lineOffsets: number[],
+  lastLine: number,
+): State {
+  const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
+
+  return {
+    ...state,
+    [sessionId]: {
+      last_line: newLastLine,
+      turn_count: turnCount + newTurns,
+      updated: new Date().toISOString(),
+    },
+  };
+}

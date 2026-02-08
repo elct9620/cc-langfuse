@@ -14,7 +14,7 @@ import {
 } from "./content.js";
 import { matchToolResults, groupTurns } from "./parser.js";
 import type { Turn, Message } from "./types.js";
-import { parseNewMessages } from "./filesystem.js";
+import { parseNewMessages, computeUpdatedState } from "./filesystem.js";
 import type { State } from "./filesystem.js";
 
 interface GenerationContext {
@@ -184,27 +184,6 @@ async function createTrace(
   );
 
   debug(`Created trace for turn ${turnNum}`);
-}
-
-function computeUpdatedState(
-  state: State,
-  sessionId: string,
-  turnCount: number,
-  newTurns: number,
-  consumed: number,
-  lineOffsets: number[],
-  lastLine: number,
-): State {
-  const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
-
-  return {
-    ...state,
-    [sessionId]: {
-      last_line: newLastLine,
-      turn_count: turnCount + newTurns,
-      updated: new Date().toISOString(),
-    },
-  };
 }
 
 export async function processTranscript(
