@@ -11,15 +11,26 @@ import {
 import type { State } from "./filesystem.js";
 import { createTrace } from "./tracer.js";
 
-function computeUpdatedState(
-  state: State,
-  sessionId: string,
-  turnCount: number,
-  newTurns: number,
-  consumed: number,
-  lineOffsets: number[],
-  lastLine: number,
-): State {
+interface UpdateStateParams {
+  state: State;
+  sessionId: string;
+  turnCount: number;
+  newTurns: number;
+  consumed: number;
+  lineOffsets: number[];
+  lastLine: number;
+}
+
+function computeUpdatedState(params: UpdateStateParams): State {
+  const {
+    state,
+    sessionId,
+    turnCount,
+    newTurns,
+    consumed,
+    lineOffsets,
+    lastLine,
+  } = params;
   const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
 
   return {
@@ -32,17 +43,31 @@ function computeUpdatedState(
   };
 }
 
-function computeRecoveryState(
-  state: State,
-  prevSessionId: string,
-  prevTotalLines: number,
-  prevTurnCount: number,
-  prevNewTurns: number,
-  currentSessionId: string,
-  currentLastLine: number,
-  currentTurnCount: number,
-  currentNewTurns: number,
-): State {
+interface RecoveryStateParams {
+  state: State;
+  prevSessionId: string;
+  prevTotalLines: number;
+  prevTurnCount: number;
+  prevNewTurns: number;
+  currentSessionId: string;
+  currentLastLine: number;
+  currentTurnCount: number;
+  currentNewTurns: number;
+}
+
+function computeRecoveryState(params: RecoveryStateParams): State {
+  const {
+    state,
+    prevSessionId,
+    prevTotalLines,
+    prevTurnCount,
+    prevNewTurns,
+    currentSessionId,
+    currentLastLine,
+    currentTurnCount,
+    currentNewTurns,
+  } = params;
+
   return {
     ...state,
     [prevSessionId]: {
@@ -119,15 +144,15 @@ export async function processTranscript(
     }
   });
 
-  const updatedState = computeUpdatedState(
+  const updatedState = computeUpdatedState({
     state,
     sessionId,
     turnCount,
-    turns.length,
+    newTurns: turns.length,
     consumed,
-    parsed.lineOffsets,
+    lineOffsets: parsed.lineOffsets,
     lastLine,
-  );
+  });
 
   return { turns: turns.length, updatedState };
 }
@@ -179,17 +204,17 @@ export async function processTranscriptWithRecovery(
       ? merged.currentLineOffsets[currentConsumed - 1]
       : currentState.last_line;
 
-  const updatedState = computeRecoveryState(
+  const updatedState = computeRecoveryState({
     state,
     prevSessionId,
     prevTotalLines,
-    prevState.turn_count,
-    prevTurns.length,
+    prevTurnCount: prevState.turn_count,
+    prevNewTurns: prevTurns.length,
     currentSessionId,
     currentLastLine,
-    currentState.turn_count,
-    currentTurns.length,
-  );
+    currentTurnCount: currentState.turn_count,
+    currentNewTurns: currentTurns.length,
+  });
 
   return { turns: turns.length, updatedState };
 }
