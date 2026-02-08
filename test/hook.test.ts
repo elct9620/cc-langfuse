@@ -1061,7 +1061,7 @@ describe("processTranscriptWithRecovery", () => {
     }
   });
 
-  it("merges prev user-only + current assistant into 1 complete turn", async () => {
+  it("attributes orphaned prev user + current assistant to current session", async () => {
     // Previous session: user message only (no assistant reply)
     const prevPath = setupTranscriptAt("prev-session.jsonl", [
       { sessionId: "prev-session", type: "user", content: "hello from prev" },
@@ -1089,18 +1089,18 @@ describe("processTranscriptWithRecovery", () => {
       state,
     );
 
+    // Prev session has no complete turns (user only, no assistant)
+    // Current session picks up orphaned prev user + assistant as 1 turn
     expect(result.turns).toBe(1);
     expect(mockStartActiveObservation).toHaveBeenCalledTimes(1);
     expect(mockPropagateAttributes).toHaveBeenCalledWith(
-      { sessionId: "prev-session" },
+      { sessionId: "current-session" },
       expect.any(Function),
     );
-    // prev session state should be marked as fully processed
-    expect(result.updatedState["prev-session"].last_line).toBe(1);
-    expect(result.updatedState["prev-session"].turn_count).toBe(1);
+    expect(result.updatedState["current-session"].turn_count).toBe(1);
   });
 
-  it("splits turns across prev and current sessions by sessionId", async () => {
+  it("processes each session independently via sequential processTranscript calls", async () => {
     const prevPath = setupTranscriptAt("prev-session.jsonl", [
       { sessionId: "prev-session", type: "user", content: "prev question" },
     ]);
@@ -1139,21 +1139,18 @@ describe("processTranscriptWithRecovery", () => {
       state,
     );
 
+    // Prev has no complete turns (user only, no assistant)
+    // Current has 2 turns: orphaned prev user + assistant, then current user + assistant
     expect(result.turns).toBe(2);
-    // Both sessions should have propagateAttributes called
-    expect(mockPropagateAttributes).toHaveBeenCalledWith(
-      { sessionId: "prev-session" },
-      expect.any(Function),
-    );
+    // Only current session should have propagateAttributes called
     expect(mockPropagateAttributes).toHaveBeenCalledWith(
       { sessionId: "current-session" },
       expect.any(Function),
     );
-    expect(result.updatedState["prev-session"].turn_count).toBe(1);
-    expect(result.updatedState["current-session"].turn_count).toBe(1);
+    expect(result.updatedState["current-session"].turn_count).toBe(2);
   });
 
-  it("recovers cross-session turn when previous session already in state", async () => {
+  it("attributes cross-session turn to current session when prev is fully processed", async () => {
     // Previous session: fully processed (1 complete turn = 2 lines)
     const prevPath = setupTranscriptAt("prev-session.jsonl", [
       { sessionId: "prev-session", type: "user", content: "prev hello" },
@@ -1193,18 +1190,71 @@ describe("processTranscriptWithRecovery", () => {
       state,
     );
 
-    // Turn should be attributed to the previous session
+    // Cross-session turn is attributed to current session (processed independently)
     expect(mockPropagateAttributes).toHaveBeenCalledWith(
-      { sessionId: "prev-session" },
-      expect.any(Function),
-    );
-    // No trace should be created under the current session
-    expect(mockPropagateAttributes).not.toHaveBeenCalledWith(
       { sessionId: "current-session" },
       expect.any(Function),
     );
-    // Previous session turn count should increment
-    expect(result.updatedState["prev-session"].turn_count).toBe(2);
+    // Current session gets the turn
+    expect(result.updatedState["current-session"].turn_count).toBe(1);
+    // Previous session unchanged
+    expect(result.updatedState["prev-session"].turn_count).toBe(1);
+  });
+
+  it("creates traces under both sessions when prev is fully processed and current has turns", async () => {
+    // Previous session: 1 complete turn, fully processed in state
+    const prevPath = setupTranscriptAt("prev-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "prev hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "prev reply" }],
+        },
+      },
+    ]);
+
+    // Current transcript: line 0 = orphaned prev user, line 1 = current user, line 2 = current assistant
+    const currentPath = setupTranscriptAt("current-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "orphaned msg" },
+      {
+        sessionId: "current-session",
+        type: "user",
+        content: "current hello",
+      },
+      {
+        message: {
+          id: "m2",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "current reply" }],
+        },
+      },
+    ]);
+
+    // Previous session already fully processed
+    const state = {
+      "prev-session": { last_line: 2, turn_count: 1, updated: "" },
+    };
+
+    const result = await processTranscriptWithRecovery(
+      "current-session",
+      currentPath,
+      "prev-session",
+      prevPath,
+      state,
+    );
+
+    // propagateAttributes must be called with the current session ID
+    expect(mockPropagateAttributes).toHaveBeenCalledWith(
+      { sessionId: "current-session" },
+      expect.any(Function),
+    );
+    // Current session should have 1 turn
+    expect(result.updatedState["current-session"].turn_count).toBe(1);
+    // Total turns should be 1 (only current session has new turns)
+    expect(result.turns).toBe(1);
   });
 
   it("returns zero turns when both transcripts are empty", async () => {

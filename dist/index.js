@@ -80,25 +80,6 @@ function parseNewMessages(transcriptFile, lastLine) {
 		lineOffsets
 	} : null;
 }
-function countTotalLines(filePath) {
-	try {
-		return readFileSync(filePath, "utf8").trim().split("\n").length;
-	} catch {
-		return 0;
-	}
-}
-function mergeTranscriptMessages(prevFile, prevLastLine, currentFile, currentLastLine) {
-	const prev = parseNewMessages(prevFile, prevLastLine);
-	const current = parseNewMessages(currentFile, currentLastLine);
-	const prevMessages = prev?.messages ?? [];
-	const currentMessages = current?.messages ?? [];
-	if (prevMessages.length === 0 && currentMessages.length === 0) return null;
-	return {
-		messages: [...prevMessages, ...currentMessages],
-		prevCount: prevMessages.length,
-		currentLineOffsets: current?.lineOffsets ?? []
-	};
-}
 
 //#endregion
 //#region src/content.ts
@@ -113,10 +94,6 @@ function isToolUseBlock(item) {
 }
 function isToolResultBlock(item) {
 	return isBlockOfType(item, "tool_result");
-}
-function getSessionId(msg) {
-	const sid = msg.sessionId;
-	return typeof sid === "string" ? sid : void 0;
 }
 function getTimestamp(msg) {
 	const ts = msg.timestamp ?? msg.message?.timestamp;
@@ -422,44 +399,6 @@ function computeUpdatedState(params) {
 		}
 	};
 }
-function computeRecoveryState(params) {
-	const { state, prevSessionId, prevTotalLines, prevTurnCount, prevNewTurns, currentSessionId, currentLastLine, currentTurnCount, currentNewTurns } = params;
-	return {
-		...state,
-		[prevSessionId]: {
-			last_line: prevTotalLines,
-			turn_count: prevTurnCount + prevNewTurns,
-			updated: (/* @__PURE__ */ new Date()).toISOString()
-		},
-		[currentSessionId]: {
-			last_line: currentLastLine,
-			turn_count: currentTurnCount + currentNewTurns,
-			updated: (/* @__PURE__ */ new Date()).toISOString()
-		}
-	};
-}
-async function createSessionTraces(sessionId, turns, startingTurnCount) {
-	if (turns.length === 0) return;
-	await propagateAttributes({ sessionId }, async () => {
-		for (let i = 0; i < turns.length; i++) await createTrace(sessionId, startingTurnCount + i + 1, turns[i].turn);
-	});
-}
-function partitionTurnsBySession(turns, prevSessionId) {
-	const prevTurns = [];
-	const currentTurns = [];
-	for (let i = 0; i < turns.length; i++) if (getSessionId(turns[i].user) === prevSessionId) prevTurns.push({
-		turn: turns[i],
-		index: i
-	});
-	else currentTurns.push({
-		turn: turns[i],
-		index: i
-	});
-	return {
-		prevTurns,
-		currentTurns
-	};
-}
 async function processTranscript(sessionId, transcriptFile, state) {
 	const sessionState = state[sessionId] ?? {
 		last_line: 0,
@@ -496,45 +435,11 @@ async function processTranscript(sessionId, transcriptFile, state) {
 	};
 }
 async function processTranscriptWithRecovery(currentSessionId, currentFile, prevSessionId, prevFile, state) {
-	const prevState = state[prevSessionId] ?? {
-		last_line: 0,
-		turn_count: 0
-	};
-	const currentState = state[currentSessionId] ?? {
-		last_line: 0,
-		turn_count: 0
-	};
-	const merged = mergeTranscriptMessages(prevFile, prevState.last_line, currentFile, currentState.last_line);
-	if (!merged) return {
-		turns: 0,
-		updatedState: state
-	};
-	debug(`Merging transcripts: ${merged.prevCount} prev + ${merged.messages.length - merged.prevCount} current messages`);
-	const { turns, consumed } = groupTurns(merged.messages);
-	if (turns.length === 0) return {
-		turns: 0,
-		updatedState: state
-	};
-	const { prevTurns, currentTurns } = partitionTurnsBySession(turns, prevSessionId);
-	await createSessionTraces(prevSessionId, prevTurns, prevState.turn_count);
-	await createSessionTraces(currentSessionId, currentTurns, currentState.turn_count);
-	const prevTotalLines = countTotalLines(prevFile);
-	const currentConsumed = Math.max(0, consumed - merged.prevCount);
-	const currentLastLine = currentConsumed > 0 ? merged.currentLineOffsets[currentConsumed - 1] : currentState.last_line;
-	const updatedState = computeRecoveryState({
-		state,
-		prevSessionId,
-		prevTotalLines,
-		prevTurnCount: prevState.turn_count,
-		prevNewTurns: prevTurns.length,
-		currentSessionId,
-		currentLastLine,
-		currentTurnCount: currentState.turn_count,
-		currentNewTurns: currentTurns.length
-	});
+	const prevResult = await processTranscript(prevSessionId, prevFile, state);
+	const currentResult = await processTranscript(currentSessionId, currentFile, prevResult.updatedState);
 	return {
-		turns: turns.length,
-		updatedState
+		turns: prevResult.turns + currentResult.turns,
+		updatedState: currentResult.updatedState
 	};
 }
 

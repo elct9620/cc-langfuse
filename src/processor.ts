@@ -1,13 +1,7 @@
 import { propagateAttributes } from "@langfuse/tracing";
 import { debug } from "./logger.js";
-import { getSessionId } from "./content.js";
 import { groupTurns } from "./parser.js";
-import type { Turn } from "./types.js";
-import {
-  parseNewMessages,
-  mergeTranscriptMessages,
-  countTotalLines,
-} from "./filesystem.js";
+import { parseNewMessages } from "./filesystem.js";
 import type { State } from "./filesystem.js";
 import { createTrace } from "./tracer.js";
 
@@ -41,84 +35,6 @@ function computeUpdatedState(params: UpdateStateParams): State {
       updated: new Date().toISOString(),
     },
   };
-}
-
-interface RecoveryStateParams {
-  state: State;
-  prevSessionId: string;
-  prevTotalLines: number;
-  prevTurnCount: number;
-  prevNewTurns: number;
-  currentSessionId: string;
-  currentLastLine: number;
-  currentTurnCount: number;
-  currentNewTurns: number;
-}
-
-function computeRecoveryState(params: RecoveryStateParams): State {
-  const {
-    state,
-    prevSessionId,
-    prevTotalLines,
-    prevTurnCount,
-    prevNewTurns,
-    currentSessionId,
-    currentLastLine,
-    currentTurnCount,
-    currentNewTurns,
-  } = params;
-
-  return {
-    ...state,
-    [prevSessionId]: {
-      last_line: prevTotalLines,
-      turn_count: prevTurnCount + prevNewTurns,
-      updated: new Date().toISOString(),
-    },
-    [currentSessionId]: {
-      last_line: currentLastLine,
-      turn_count: currentTurnCount + currentNewTurns,
-      updated: new Date().toISOString(),
-    },
-  };
-}
-
-interface IndexedTurn {
-  turn: Turn;
-  index: number;
-}
-
-async function createSessionTraces(
-  sessionId: string,
-  turns: IndexedTurn[],
-  startingTurnCount: number,
-): Promise<void> {
-  if (turns.length === 0) return;
-
-  await propagateAttributes({ sessionId }, async () => {
-    for (let i = 0; i < turns.length; i++) {
-      await createTrace(sessionId, startingTurnCount + i + 1, turns[i].turn);
-    }
-  });
-}
-
-function partitionTurnsBySession(
-  turns: Turn[],
-  prevSessionId: string,
-): { prevTurns: IndexedTurn[]; currentTurns: IndexedTurn[] } {
-  const prevTurns: IndexedTurn[] = [];
-  const currentTurns: IndexedTurn[] = [];
-
-  for (let i = 0; i < turns.length; i++) {
-    const sid = getSessionId(turns[i].user);
-    if (sid === prevSessionId) {
-      prevTurns.push({ turn: turns[i], index: i });
-    } else {
-      currentTurns.push({ turn: turns[i], index: i });
-    }
-  }
-
-  return { prevTurns, currentTurns };
 }
 
 export async function processTranscript(
@@ -164,57 +80,16 @@ export async function processTranscriptWithRecovery(
   prevFile: string,
   state: State,
 ): Promise<{ turns: number; updatedState: State }> {
-  const prevState = state[prevSessionId] ?? { last_line: 0, turn_count: 0 };
-  const currentState = state[currentSessionId] ?? {
-    last_line: 0,
-    turn_count: 0,
-  };
+  const prevResult = await processTranscript(prevSessionId, prevFile, state);
 
-  const merged = mergeTranscriptMessages(
-    prevFile,
-    prevState.last_line,
+  const currentResult = await processTranscript(
+    currentSessionId,
     currentFile,
-    currentState.last_line,
-  );
-  if (!merged) return { turns: 0, updatedState: state };
-
-  debug(
-    `Merging transcripts: ${merged.prevCount} prev + ${merged.messages.length - merged.prevCount} current messages`,
+    prevResult.updatedState,
   );
 
-  const { turns, consumed } = groupTurns(merged.messages);
-  if (turns.length === 0) return { turns: 0, updatedState: state };
-
-  const { prevTurns, currentTurns } = partitionTurnsBySession(
-    turns,
-    prevSessionId,
-  );
-
-  await createSessionTraces(prevSessionId, prevTurns, prevState.turn_count);
-  await createSessionTraces(
-    currentSessionId,
-    currentTurns,
-    currentState.turn_count,
-  );
-
-  const prevTotalLines = countTotalLines(prevFile);
-  const currentConsumed = Math.max(0, consumed - merged.prevCount);
-  const currentLastLine =
-    currentConsumed > 0
-      ? merged.currentLineOffsets[currentConsumed - 1]
-      : currentState.last_line;
-
-  const updatedState = computeRecoveryState({
-    state,
-    prevSessionId,
-    prevTotalLines,
-    prevTurnCount: prevState.turn_count,
-    prevNewTurns: prevTurns.length,
-    currentSessionId,
-    currentLastLine,
-    currentTurnCount: currentState.turn_count,
-    currentNewTurns: currentTurns.length,
-  });
-
-  return { turns: turns.length, updatedState };
+  return {
+    turns: prevResult.turns + currentResult.turns,
+    updatedState: currentResult.updatedState,
+  };
 }

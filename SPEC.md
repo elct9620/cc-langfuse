@@ -147,23 +147,28 @@ If a message lacks a `timestamp` field, timing for that observation is omitted (
 
 ### Cross-Session Recovery
 
-When Claude Code exits Plan Mode, the session ID changes. The new transcript may begin with messages from the previous session (a user message from the old session followed by an assistant response under the new session). This creates a cross-session turn.
+When Claude Code exits Plan Mode, the session ID changes. The new transcript may begin with messages from the previous session (a user message from the old session). This creates an orphaned cross-session message.
 
 **Detection**: The first line of the current transcript carries a `sessionId`. If it differs from the current session ID and the previous session's transcript file exists in the same directory, recovery is triggered.
 
-**Recovery does not check whether the previous session is already in state.** The previous session's `last_line` in state determines where to resume reading its transcript, so already-processed lines are naturally skipped. This handles two scenarios identically:
+**Recovery processes each session independently** via sequential `processTranscript` calls:
 
-| Scenario                                   | Previous session in state? | Behavior                                                                    |
-| ------------------------------------------ | -------------------------- | --------------------------------------------------------------------------- |
-| Previous session's Stop hook never fired   | No                         | Recover all unprocessed turns from previous transcript + cross-session turn |
-| Previous session's Stop hook already fired | Yes                        | Skip already-processed lines; recover only the cross-session turn           |
+1. Process previous session's transcript (recovers any unprocessed turns)
+2. Process current session's transcript (using updated state from step 1)
 
-**Turn attribution**: Each turn is attributed to the session that owns the user message. A cross-session turn (user from old session, assistant from new session) is attributed to the old session.
+Each call follows the same proven code path used for normal (non-recovery) sessions. The previous session's `last_line` in state determines where to resume reading its transcript, so already-processed lines are naturally skipped.
 
-| Turn's user sessionId | Attributed to    | Turn count incremented on            |
-| --------------------- | ---------------- | ------------------------------------ |
-| Previous session      | Previous session | `state[prevSessionId].turn_count`    |
-| Current session       | Current session  | `state[currentSessionId].turn_count` |
+| Scenario                                   | Previous session in state? | Behavior                                                         |
+| ------------------------------------------ | -------------------------- | ---------------------------------------------------------------- |
+| Previous session's Stop hook never fired   | No                         | Recover all unprocessed turns from previous transcript           |
+| Previous session's Stop hook already fired | Yes                        | Skip already-processed lines; no new turns from previous session |
+
+**Turn attribution**: All turns in a transcript are attributed to the session ID passed to `processTranscript`. An orphaned previous-session user message in the current transcript (with no matching assistant response) is skipped as an incomplete turn. If it does pair with an assistant response, it is attributed to the current session.
+
+| Transcript              | Attributed to    | Turn count incremented on            |
+| ----------------------- | ---------------- | ------------------------------------ |
+| Previous session's file | Previous session | `state[prevSessionId].turn_count`    |
+| Current session's file  | Current session  | `state[currentSessionId].turn_count` |
 
 ### Error Scenarios
 

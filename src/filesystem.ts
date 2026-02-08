@@ -91,36 +91,3 @@ export function parseNewMessages(
 
   return messages.length > 0 ? { messages, lineOffsets } : null;
 }
-
-export function countTotalLines(filePath: string): number {
-  try {
-    return readFileSync(filePath, "utf8").trim().split("\n").length;
-  } catch {
-    return 0;
-  }
-}
-
-export function mergeTranscriptMessages(
-  prevFile: string,
-  prevLastLine: number,
-  currentFile: string,
-  currentLastLine: number,
-): {
-  messages: Message[];
-  prevCount: number;
-  currentLineOffsets: number[];
-} | null {
-  const prev = parseNewMessages(prevFile, prevLastLine);
-  const current = parseNewMessages(currentFile, currentLastLine);
-
-  const prevMessages = prev?.messages ?? [];
-  const currentMessages = current?.messages ?? [];
-
-  if (prevMessages.length === 0 && currentMessages.length === 0) return null;
-
-  return {
-    messages: [...prevMessages, ...currentMessages],
-    prevCount: prevMessages.length,
-    currentLineOffsets: current?.lineOffsets ?? [],
-  };
-}
