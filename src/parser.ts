@@ -123,7 +123,12 @@ export function mergeAssistantParts(parts: Message[]): Message {
   return result;
 }
 
-export function groupTurns(messages: Message[]): Turn[] {
+export interface GroupTurnsResult {
+  turns: Turn[];
+  consumed: number;
+}
+
+export function groupTurns(messages: Message[]): GroupTurnsResult {
   const turns: Turn[] = [];
 
   let currentUser: Message | null = null;
@@ -131,6 +136,7 @@ export function groupTurns(messages: Message[]): Turn[] {
   let currentParts: Message[] = [];
   let currentMsgId: string | null = null;
   let currentToolResults: Message[] = [];
+  let lastCompleteTurnEnd = 0;
 
   function finalizeParts(): void {
     if (currentMsgId !== null && currentParts.length > 0) {
@@ -140,7 +146,7 @@ export function groupTurns(messages: Message[]): Turn[] {
     }
   }
 
-  function finalizeTurn(): void {
+  function finalizeTurn(nextIdx: number): void {
     finalizeParts();
     if (currentUser !== null && currentAssistants.length > 0) {
       turns.push({
@@ -148,21 +154,29 @@ export function groupTurns(messages: Message[]): Turn[] {
         assistants: currentAssistants,
         toolResults: currentToolResults,
       });
+      lastCompleteTurnEnd = nextIdx;
     }
   }
 
+  let idx = 0;
   for (const msg of messages) {
+    if (msg.isMeta === true) {
+      idx++;
+      continue;
+    }
+
     const role =
       msg.type ?? (msg.message as Message | undefined)?.role ?? undefined;
 
     if (role === "user") {
       if (isToolResult(msg)) {
         currentToolResults.push(msg);
+        idx++;
         continue;
       }
 
       // New user message — finalize previous turn
-      finalizeTurn();
+      finalizeTurn(idx);
 
       currentUser = msg;
       currentAssistants = [];
@@ -182,12 +196,14 @@ export function groupTurns(messages: Message[]): Turn[] {
         currentParts = [msg];
       }
     }
+
+    idx++;
   }
 
   // Process final turn
-  finalizeTurn();
+  finalizeTurn(messages.length);
 
-  return turns;
+  return { turns, consumed: lastCompleteTurnEnd };
 }
 
 export function getUsage(msg: Message): Record<string, number> | undefined {

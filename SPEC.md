@@ -136,6 +136,14 @@ Each observation carries start and end timestamps derived from the JSONL transcr
 
 If a message lacks a `timestamp` field, timing for that observation is omitted (SDK defaults to creation time).
 
+### Message Filtering
+
+- Messages with `isMeta: true` (e.g., skill framework scaffolding injected by `/fix` or other slash commands) are skipped during turn grouping. This prevents framework text from replacing the real user message as trace input.
+
+### Incremental Processing
+
+- `last_line` only advances to the end of the last complete turn, not to the end of the transcript. An incomplete turn (a user message without a subsequent assistant response) is reprocessed on the next hook invocation.
+
 ### Error Scenarios
 
 | Scenario                        | Behavior                                                                                 |

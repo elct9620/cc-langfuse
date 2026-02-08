@@ -413,6 +413,74 @@ describe("processTranscript", () => {
     );
   });
 
+  it("does not advance last_line past incomplete turns", async () => {
+    const filePath = setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+      { type: "user", content: "incomplete turn without assistant" },
+    ]);
+
+    const state = {};
+    const result = await processTranscript("sess1", filePath, state);
+
+    expect(result.turns).toBe(1);
+    // last_line should only cover the first complete turn (2 lines), not the trailing user message
+    expect(result.updatedState.sess1.last_line).toBe(2);
+  });
+
+  it("reprocesses incomplete turn on next invocation", async () => {
+    const filePath = setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+      { type: "user", content: "second question" },
+    ]);
+
+    // First invocation: processes turn 1, leaves "second question" incomplete
+    const state = {};
+    const result1 = await processTranscript("sess1", filePath, state);
+    expect(result1.turns).toBe(1);
+    expect(result1.updatedState.sess1.last_line).toBe(2);
+
+    // Simulate appending an assistant reply to complete the second turn
+    const { writeFileSync: writeFs, readFileSync: readFs } =
+      await import("node:fs");
+    const existing = readFs(filePath, "utf8");
+    writeFs(
+      filePath,
+      existing +
+        "\n" +
+        JSON.stringify({
+          message: {
+            id: "m2",
+            role: "assistant",
+            content: [{ type: "text", text: "second reply" }],
+          },
+        }),
+    );
+
+    // Second invocation: should pick up the incomplete "second question" and its new reply
+    const result2 = await processTranscript(
+      "sess1",
+      filePath,
+      result1.updatedState,
+    );
+    expect(result2.turns).toBe(1);
+    expect(result2.updatedState.sess1.turn_count).toBe(2);
+    expect(result2.updatedState.sess1.last_line).toBe(4);
+  });
+
   it("returns updated state after processing", async () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hi" },

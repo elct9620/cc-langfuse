@@ -9,7 +9,7 @@ import {
   groupTurns,
   matchToolResults,
 } from "../src/parser.js";
-import type { Turn, ToolUseBlock } from "../src/parser.js";
+import type { Turn, ToolUseBlock, GroupTurnsResult } from "../src/parser.js";
 
 describe("getContent", () => {
   it("extracts content from a message with nested message field", () => {
@@ -158,7 +158,7 @@ describe("groupTurns", () => {
         message: { id: "m1", role: "assistant", content: "hello" },
       },
     ];
-    const turns = groupTurns(messages);
+    const { turns } = groupTurns(messages);
     expect(turns).toHaveLength(1);
     expect(getTextContent(turns[0].user)).toBe("hi");
     expect(turns[0].assistants).toHaveLength(1);
@@ -191,7 +191,7 @@ describe("groupTurns", () => {
         },
       },
     ];
-    const turns = groupTurns(messages);
+    const { turns } = groupTurns(messages);
     expect(turns).toHaveLength(1);
     expect(turns[0].toolResults).toHaveLength(1);
     expect(turns[0].assistants).toHaveLength(2);
@@ -204,7 +204,7 @@ describe("groupTurns", () => {
       { type: "user", content: "second" },
       { message: { id: "m2", role: "assistant", content: "reply2" } },
     ];
-    const turns = groupTurns(messages);
+    const { turns } = groupTurns(messages);
     expect(turns).toHaveLength(2);
     expect(getTextContent(turns[0].user)).toBe("first");
     expect(getTextContent(turns[1].user)).toBe("second");
@@ -228,7 +228,7 @@ describe("groupTurns", () => {
         },
       },
     ];
-    const turns = groupTurns(messages);
+    const { turns } = groupTurns(messages);
     expect(turns).toHaveLength(1);
     expect(turns[0].assistants).toHaveLength(1);
     const merged = turns[0].assistants[0];
@@ -237,13 +237,80 @@ describe("groupTurns", () => {
     expect(content).toHaveLength(2);
   });
 
-  it("returns empty array for no messages", () => {
-    expect(groupTurns([])).toEqual([]);
+  it("returns empty result for no messages", () => {
+    const { turns, consumed } = groupTurns([]);
+    expect(turns).toEqual([]);
+    expect(consumed).toBe(0);
   });
 
-  it("returns empty array for only user message without assistant", () => {
+  it("returns no turns for only user message without assistant", () => {
     const messages = [{ type: "user", content: "hi" }];
-    expect(groupTurns(messages)).toEqual([]);
+    const { turns, consumed } = groupTurns(messages);
+    expect(turns).toEqual([]);
+    expect(consumed).toBe(0);
+  });
+
+  it("skips isMeta user messages and uses the real user message", () => {
+    const messages = [
+      { type: "user", content: "skill rubric scaffolding...", isMeta: true },
+      { type: "user", content: "real user question" },
+      {
+        message: { id: "m1", role: "assistant", content: "answer" },
+      },
+    ];
+    const { turns } = groupTurns(messages);
+    expect(turns).toHaveLength(1);
+    expect(getTextContent(turns[0].user)).toBe("real user question");
+  });
+
+  it("skips isMeta assistant messages", () => {
+    const messages = [
+      { type: "user", content: "hello" },
+      {
+        message: { id: "m1", role: "assistant", content: "meta response" },
+        isMeta: true,
+      },
+      {
+        message: {
+          id: "m2",
+          role: "assistant",
+          content: [{ type: "text", text: "real response" }],
+        },
+      },
+    ];
+    const { turns } = groupTurns(messages);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].assistants).toHaveLength(1);
+    expect(getTextContent(turns[0].assistants[0])).toBe("real response");
+  });
+
+  it("reports consumed count for complete turns only", () => {
+    const messages = [
+      { type: "user", content: "first" },
+      { message: { id: "m1", role: "assistant", content: "reply1" } },
+      { type: "user", content: "second (incomplete)" },
+    ];
+    const { turns, consumed } = groupTurns(messages);
+    expect(turns).toHaveLength(1);
+    expect(consumed).toBe(2);
+  });
+
+  it("consumes all messages when all turns complete", () => {
+    const messages = [
+      { type: "user", content: "first" },
+      { message: { id: "m1", role: "assistant", content: "reply1" } },
+      { type: "user", content: "second" },
+      { message: { id: "m2", role: "assistant", content: "reply2" } },
+    ];
+    const { turns, consumed } = groupTurns(messages);
+    expect(turns).toHaveLength(2);
+    expect(consumed).toBe(4);
+  });
+
+  it("returns consumed 0 when no complete turns", () => {
+    const messages = [{ type: "user", content: "hi" }];
+    const { consumed } = groupTurns(messages);
+    expect(consumed).toBe(0);
   });
 });
 

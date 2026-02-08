@@ -156,6 +156,7 @@ function groupTurns(messages) {
 	let currentParts = [];
 	let currentMsgId = null;
 	let currentToolResults = [];
+	let lastCompleteTurnEnd = 0;
 	function finalizeParts() {
 		if (currentMsgId !== null && currentParts.length > 0) {
 			currentAssistants.push(mergeAssistantParts(currentParts));
@@ -163,22 +164,31 @@ function groupTurns(messages) {
 			currentMsgId = null;
 		}
 	}
-	function finalizeTurn() {
+	function finalizeTurn(nextIdx) {
 		finalizeParts();
-		if (currentUser !== null && currentAssistants.length > 0) turns.push({
-			user: currentUser,
-			assistants: currentAssistants,
-			toolResults: currentToolResults
-		});
+		if (currentUser !== null && currentAssistants.length > 0) {
+			turns.push({
+				user: currentUser,
+				assistants: currentAssistants,
+				toolResults: currentToolResults
+			});
+			lastCompleteTurnEnd = nextIdx;
+		}
 	}
+	let idx = 0;
 	for (const msg of messages) {
+		if (msg.isMeta === true) {
+			idx++;
+			continue;
+		}
 		const role = msg.type ?? msg.message?.role ?? void 0;
 		if (role === "user") {
 			if (isToolResult(msg)) {
 				currentToolResults.push(msg);
+				idx++;
 				continue;
 			}
-			finalizeTurn();
+			finalizeTurn(idx);
 			currentUser = msg;
 			currentAssistants = [];
 			currentParts = [];
@@ -194,9 +204,13 @@ function groupTurns(messages) {
 				currentParts = [msg];
 			}
 		}
+		idx++;
 	}
-	finalizeTurn();
-	return turns;
+	finalizeTurn(messages.length);
+	return {
+		turns,
+		consumed: lastCompleteTurnEnd
+	};
 }
 function getUsage(msg) {
 	const usage = msg.message?.usage;
@@ -340,8 +354,10 @@ async function processTranscript(sessionId, transcriptFile, state) {
 		};
 	}
 	const newMessages = [];
+	const lineOffsets = [];
 	for (let i = lastLine; i < totalLines; i++) try {
 		newMessages.push(JSON.parse(lines[i]));
+		lineOffsets.push(i + 1);
 	} catch (e) {
 		debug(`Skipping line ${i}: ${e}`);
 		continue;
@@ -351,14 +367,19 @@ async function processTranscript(sessionId, transcriptFile, state) {
 		updatedState: state
 	};
 	debug(`Processing ${newMessages.length} new messages`);
-	const turns = groupTurns(newMessages);
+	const { turns, consumed } = groupTurns(newMessages);
+	if (turns.length === 0) return {
+		turns: 0,
+		updatedState: state
+	};
 	await propagateAttributes({ sessionId }, async () => {
 		for (let i = 0; i < turns.length; i++) await createTrace(sessionId, turnCount + i + 1, turns[i]);
 	});
+	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
 	const updatedState = {
 		...state,
 		[sessionId]: {
-			last_line: totalLines,
+			last_line: newLastLine,
 			turn_count: turnCount + turns.length,
 			updated: (/* @__PURE__ */ new Date()).toISOString()
 		}

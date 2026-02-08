@@ -183,9 +183,11 @@ export async function processTranscript(
   // Parse new messages
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const newMessages: Record<string, any>[] = [];
+  const lineOffsets: number[] = [];
   for (let i = lastLine; i < totalLines; i++) {
     try {
       newMessages.push(JSON.parse(lines[i]));
+      lineOffsets.push(i + 1);
     } catch (e) {
       debug(`Skipping line ${i}: ${e}`);
       continue;
@@ -196,7 +198,9 @@ export async function processTranscript(
 
   debug(`Processing ${newMessages.length} new messages`);
 
-  const turns = groupTurns(newMessages);
+  const { turns, consumed } = groupTurns(newMessages);
+
+  if (turns.length === 0) return { turns: 0, updatedState: state };
 
   await propagateAttributes({ sessionId }, async () => {
     for (let i = 0; i < turns.length; i++) {
@@ -204,10 +208,12 @@ export async function processTranscript(
     }
   });
 
+  const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
+
   const updatedState: State = {
     ...state,
     [sessionId]: {
-      last_line: totalLines,
+      last_line: newLastLine,
       turn_count: turnCount + turns.length,
       updated: new Date().toISOString(),
     },
