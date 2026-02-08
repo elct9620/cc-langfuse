@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Readable } from "node:stream";
 
 // Mock homedir before importing modules that use it
 const testDir = join(tmpdir(), `cc-langfuse-test-${Date.now()}`);
@@ -122,6 +123,11 @@ function setupTranscript(lines: object[]): string {
   return filePath;
 }
 
+function mockStdin(data: object): void {
+  const readable = Readable.from([JSON.stringify(data)]);
+  vi.spyOn(process, "stdin", "get").mockReturnValue(readable as any);
+}
+
 describe("hook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -154,7 +160,7 @@ describe("hook", () => {
     vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
     vi.stubEnv("CC_LANGFUSE_BASE_URL", "https://langfuse.example.com");
 
-    setupTranscript([
+    const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },
       {
         message: {
@@ -165,6 +171,7 @@ describe("hook", () => {
         },
       },
     ]);
+    mockStdin({ session_id: "sess1", transcript_path: filePath });
 
     await hook();
 
@@ -181,7 +188,7 @@ describe("hook", () => {
     vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
     vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
 
-    setupTranscript([
+    const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },
       {
         message: {
@@ -192,6 +199,7 @@ describe("hook", () => {
         },
       },
     ]);
+    mockStdin({ session_id: "sess1", transcript_path: filePath });
 
     await hook();
 
@@ -208,7 +216,7 @@ describe("hook", () => {
     vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
     vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
 
-    setupTranscript([
+    const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },
       {
         message: {
@@ -219,6 +227,7 @@ describe("hook", () => {
         },
       },
     ]);
+    mockStdin({ session_id: "sess1", transcript_path: filePath });
 
     await hook();
 

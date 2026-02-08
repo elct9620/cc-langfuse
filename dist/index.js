@@ -1,6 +1,6 @@
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { propagateAttributes, startActiveObservation, startObservation, updateActiveTrace } from "@langfuse/tracing";
@@ -38,63 +38,6 @@ function loadState() {
 function saveState(state) {
 	mkdirSync(dirname(STATE_FILE), { recursive: true });
 	writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
-}
-function safeReadDir(path) {
-	try {
-		return readdirSync(path);
-	} catch {
-		return [];
-	}
-}
-function safeStat(path) {
-	try {
-		return statSync(path);
-	} catch {
-		return null;
-	}
-}
-function extractSessionId(filePath) {
-	try {
-		const firstLine = readFileSync(filePath, "utf8").split("\n")[0];
-		const sessionId = JSON.parse(firstLine).sessionId ?? filePath.replace(/.*\//, "").replace(".jsonl", "");
-		debug(`Found transcript: ${filePath}, session: ${sessionId}`);
-		return {
-			sessionId,
-			filePath
-		};
-	} catch (e) {
-		debug(`Error reading transcript ${filePath}: ${e}`);
-		return null;
-	}
-}
-function findLatestTranscript() {
-	const projectsDir = join(homedir(), ".claude", "projects");
-	const dirs = safeReadDir(projectsDir);
-	if (dirs.length === 0) {
-		debug(`Projects directory not found: ${projectsDir}`);
-		return null;
-	}
-	let latestFile = null;
-	let latestMtime = 0;
-	for (const dir of dirs) {
-		const projectDir = join(projectsDir, dir);
-		if (!safeStat(projectDir)?.isDirectory()) continue;
-		const files = safeReadDir(projectDir);
-		for (const file of files) {
-			if (!file.endsWith(".jsonl")) continue;
-			const filePath = join(projectDir, file);
-			const fileStat = safeStat(filePath);
-			if (fileStat && fileStat.mtimeMs > latestMtime) {
-				latestMtime = fileStat.mtimeMs;
-				latestFile = filePath;
-			}
-		}
-	}
-	if (!latestFile) {
-		debug("No transcript files found");
-		return null;
-	}
-	return extractSessionId(latestFile);
 }
 
 //#endregion
@@ -424,6 +367,22 @@ async function processTranscript(sessionId, transcriptFile, state) {
 
 //#endregion
 //#region src/index.ts
+async function readHookInput() {
+	const chunks = [];
+	for await (const chunk of process.stdin) chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+	const raw = chunks.join("").trim();
+	if (!raw) return null;
+	try {
+		const data = JSON.parse(raw);
+		if (typeof data.session_id === "string" && typeof data.transcript_path === "string") return {
+			session_id: data.session_id,
+			transcript_path: data.transcript_path
+		};
+		return null;
+	} catch {
+		return null;
+	}
+}
 function resolveEnvVars() {
 	const publicKey = process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY;
 	const secretKey = process.env.CC_LANGFUSE_SECRET_KEY ?? process.env.LANGFUSE_SECRET_KEY;
@@ -456,13 +415,14 @@ async function hook() {
 	const sdk = new NodeSDK({ spanProcessors: [spanProcessor] });
 	sdk.start();
 	const state = loadState();
-	const result = findLatestTranscript();
-	if (!result) {
-		debug("No transcript file found");
+	const input = await readHookInput();
+	if (!input) {
+		debug("No hook input received via stdin");
 		await sdk.shutdown();
 		return;
 	}
-	const { sessionId, filePath } = result;
+	const sessionId = input.session_id;
+	const filePath = input.transcript_path;
 	debug(`Processing session: ${sessionId}`);
 	try {
 		const { turns, updatedState } = await processTranscript(sessionId, filePath, state);

@@ -1,8 +1,38 @@
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { log, debug, HOOK_WARNING_THRESHOLD_SECONDS } from "./logger.js";
-import { loadState, findLatestTranscript, saveState } from "./filesystem.js";
+import { loadState, saveState } from "./filesystem.js";
 import { processTranscript } from "./tracer.js";
+
+interface HookInput {
+  session_id: string;
+  transcript_path: string;
+}
+
+async function readHookInput(): Promise<HookInput | null> {
+  const chunks: string[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+  }
+  const raw = chunks.join("").trim();
+  if (!raw) return null;
+
+  try {
+    const data = JSON.parse(raw);
+    if (
+      typeof data.session_id === "string" &&
+      typeof data.transcript_path === "string"
+    ) {
+      return {
+        session_id: data.session_id,
+        transcript_path: data.transcript_path,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 interface LangfuseConfig {
   publicKey: string;
@@ -56,14 +86,15 @@ export async function hook(): Promise<void> {
 
   const state = loadState();
 
-  const result = findLatestTranscript();
-  if (!result) {
-    debug("No transcript file found");
+  const input = await readHookInput();
+  if (!input) {
+    debug("No hook input received via stdin");
     await sdk.shutdown();
     return;
   }
 
-  const { sessionId, filePath } = result;
+  const sessionId = input.session_id;
+  const filePath = input.transcript_path;
   debug(`Processing session: ${sessionId}`);
 
   try {

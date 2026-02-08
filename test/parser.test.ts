@@ -312,6 +312,27 @@ describe("groupTurns", () => {
     const { consumed } = groupTurns(messages);
     expect(consumed).toBe(0);
   });
+
+  it("does not produce turns when messages start with tool_result", () => {
+    const messages = [
+      {
+        type: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "file data" },
+        ],
+      },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "text", text: "continuing" }],
+        },
+      },
+    ];
+    const { turns, consumed } = groupTurns(messages);
+    expect(turns).toEqual([]);
+    expect(consumed).toBe(0);
+  });
 });
 
 describe("getTimestamp", () => {
