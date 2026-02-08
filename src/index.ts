@@ -1,24 +1,24 @@
-import { Langfuse } from "langfuse";
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { log, debug, HOOK_WARNING_THRESHOLD_SECONDS } from "./logger.js";
 import { loadState, findLatestTranscript, saveState } from "./filesystem.js";
 import { processTranscript } from "./tracer.js";
 
-function getLangfuseConfig(): {
-  publicKey: string;
-  secretKey: string;
-  baseUrl: string;
-} | null {
+function resolveEnvVars(): boolean {
   const publicKey =
     process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey =
     process.env.CC_LANGFUSE_SECRET_KEY ?? process.env.LANGFUSE_SECRET_KEY;
   const baseUrl =
-    process.env.CC_LANGFUSE_HOST ??
-    process.env.LANGFUSE_HOST ??
-    "https://cloud.langfuse.com";
+    process.env.CC_LANGFUSE_BASE_URL ?? process.env.LANGFUSE_BASE_URL;
 
-  if (!publicKey || !secretKey) return null;
-  return { publicKey, secretKey, baseUrl };
+  if (!publicKey || !secretKey) return false;
+
+  process.env.LANGFUSE_PUBLIC_KEY = publicKey;
+  process.env.LANGFUSE_SECRET_KEY = secretKey;
+  if (baseUrl) process.env.LANGFUSE_BASE_URL = baseUrl;
+
+  return true;
 }
 
 export async function hook(): Promise<void> {
@@ -30,8 +30,7 @@ export async function hook(): Promise<void> {
     return;
   }
 
-  const config = getLangfuseConfig();
-  if (!config) {
+  if (!resolveEnvVars()) {
     log(
       "ERROR",
       "Langfuse API keys not set (CC_LANGFUSE_PUBLIC_KEY / CC_LANGFUSE_SECRET_KEY)",
@@ -39,19 +38,22 @@ export async function hook(): Promise<void> {
     return;
   }
 
-  let langfuse: Langfuse;
-  try {
-    langfuse = new Langfuse(config);
-  } catch (e) {
-    log("ERROR", `Failed to initialize Langfuse client: ${e}`);
-    return;
-  }
+  const spanProcessor = new LangfuseSpanProcessor({
+    exportMode: "immediate",
+  });
+
+  const sdk = new NodeSDK({
+    spanProcessors: [spanProcessor],
+  });
+
+  sdk.start();
 
   const state = loadState();
 
   const result = findLatestTranscript();
   if (!result) {
     debug("No transcript file found");
+    await sdk.shutdown();
     return;
   }
 
@@ -59,25 +61,27 @@ export async function hook(): Promise<void> {
   debug(`Processing session: ${sessionId}`);
 
   try {
-    const { turns, updatedState } = processTranscript(
-      langfuse,
+    const { turns, updatedState } = await processTranscript(
       sessionId,
       filePath,
       state,
     );
     saveState(updatedState);
 
-    await langfuse.flushAsync();
+    await spanProcessor.forceFlush();
 
     const duration = (Date.now() - scriptStart) / 1000;
     log("INFO", `Processed ${turns} turns in ${duration.toFixed(1)}s`);
 
     if (duration > HOOK_WARNING_THRESHOLD_SECONDS) {
-      log("WARN", `Hook took ${duration.toFixed(1)}s (>3min), consider optimizing`);
+      log(
+        "WARN",
+        `Hook took ${duration.toFixed(1)}s (>3min), consider optimizing`,
+      );
     }
   } catch (e) {
     log("ERROR", `Failed to process transcript: ${e}`);
   } finally {
-    await langfuse.shutdownAsync();
+    await sdk.shutdown();
   }
 }

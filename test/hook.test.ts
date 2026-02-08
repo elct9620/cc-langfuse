@@ -11,29 +11,56 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...original, homedir: () => testDir };
 });
 
-// Mock Langfuse
-const mockGenerationSpanEnd = vi.fn().mockReturnThis();
-const mockGenerationSpan = vi
+// Mock @langfuse/tracing
+const mockObservationEnd = vi.fn();
+const mockObservationUpdate = vi
   .fn()
-  .mockReturnValue({ end: mockGenerationSpanEnd });
-const mockGeneration = vi.fn().mockReturnValue({ span: mockGenerationSpan });
-const mockTrace = vi.fn().mockReturnValue({
-  generation: mockGeneration,
-});
-const mockFlushAsync = vi.fn().mockResolvedValue(undefined);
-const mockShutdownAsync = vi.fn().mockResolvedValue(undefined);
+  .mockReturnValue({ end: mockObservationEnd });
+const mockStartChildObservation = vi.fn();
+mockStartChildObservation.mockImplementation(() => ({
+  update: mockObservationUpdate,
+  end: mockObservationEnd,
+  startObservation: mockStartChildObservation,
+}));
+const mockStartObservation = vi.fn().mockImplementation(() => ({
+  end: mockObservationEnd,
+  startObservation: mockStartChildObservation,
+}));
+const mockStartActiveObservation = vi
+  .fn()
+  .mockImplementation(async (_name: string, callback: () => Promise<void>) => {
+    await callback();
+  });
+const mockUpdateActiveTrace = vi.fn();
+const mockPropagateAttributes = vi
+  .fn()
+  .mockImplementation(async (_attrs: object, callback: () => Promise<void>) => {
+    await callback();
+  });
 
-function createMockLangfuse() {
-  return {
-    trace: mockTrace,
-    flushAsync: mockFlushAsync,
-    shutdownAsync: mockShutdownAsync,
-  };
-}
+vi.mock("@langfuse/tracing", () => ({
+  startActiveObservation: mockStartActiveObservation,
+  startObservation: mockStartObservation,
+  updateActiveTrace: mockUpdateActiveTrace,
+  propagateAttributes: mockPropagateAttributes,
+}));
 
-vi.mock("langfuse", () => ({
-  Langfuse: vi.fn().mockImplementation(function () {
-    return createMockLangfuse();
+// Mock @langfuse/otel
+const mockForceFlush = vi.fn().mockResolvedValue(undefined);
+
+vi.mock("@langfuse/otel", () => ({
+  LangfuseSpanProcessor: vi.fn().mockImplementation(function () {
+    return { forceFlush: mockForceFlush };
+  }),
+}));
+
+// Mock @opentelemetry/sdk-node
+const mockSdkStart = vi.fn();
+const mockSdkShutdown = vi.fn().mockResolvedValue(undefined);
+
+vi.mock("@opentelemetry/sdk-node", () => ({
+  NodeSDK: vi.fn().mockImplementation(function () {
+    return { start: mockSdkStart, shutdown: mockSdkShutdown };
   }),
 }));
 
@@ -42,10 +69,10 @@ const LANGFUSE_ENV_KEYS = [
   "TRACE_TO_LANGFUSE",
   "CC_LANGFUSE_PUBLIC_KEY",
   "CC_LANGFUSE_SECRET_KEY",
-  "CC_LANGFUSE_HOST",
+  "CC_LANGFUSE_BASE_URL",
   "LANGFUSE_PUBLIC_KEY",
   "LANGFUSE_SECRET_KEY",
-  "LANGFUSE_HOST",
+  "LANGFUSE_BASE_URL",
 ] as const;
 
 afterEach(() => {
@@ -56,7 +83,7 @@ afterEach(() => {
 const { hook } = await import("../src/index.js");
 const { processTranscript } = await import("../src/tracer.js");
 const { loadState, saveState } = await import("../src/filesystem.js");
-const { Langfuse } = await import("langfuse");
+const { NodeSDK } = await import("@opentelemetry/sdk-node");
 
 function setupTranscript(lines: object[]): string {
   const projectDir = join(testDir, ".claude", "projects", "test-project");
@@ -83,16 +110,16 @@ describe("hook", () => {
 
   it("exits silently when TRACE_TO_LANGFUSE is not set", async () => {
     await hook();
-    expect(Langfuse).not.toHaveBeenCalled();
+    expect(NodeSDK).not.toHaveBeenCalled();
   });
 
   it("exits silently when API keys are missing", async () => {
     vi.stubEnv("TRACE_TO_LANGFUSE", "true");
     await hook();
-    expect(Langfuse).not.toHaveBeenCalled();
+    expect(NodeSDK).not.toHaveBeenCalled();
   });
 
-  it("initializes Langfuse and processes transcript", async () => {
+  it("initializes NodeSDK and processes transcript", async () => {
     vi.stubEnv("TRACE_TO_LANGFUSE", "true");
     vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
     vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
@@ -111,20 +138,19 @@ describe("hook", () => {
 
     await hook();
 
-    expect(Langfuse).toHaveBeenCalledWith(
-      expect.objectContaining({
-        publicKey: "pk-test",
-        secretKey: "sk-test",
-      }),
+    expect(NodeSDK).toHaveBeenCalled();
+    expect(mockSdkStart).toHaveBeenCalled();
+    expect(mockStartActiveObservation).toHaveBeenCalledWith(
+      "Turn 1",
+      expect.any(Function),
     );
-    expect(mockTrace).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Turn 1" }),
-    );
-    expect(mockGeneration).toHaveBeenCalledWith(
+    expect(mockStartObservation).toHaveBeenCalledWith(
+      "claude-sonnet-4-5-20250929",
       expect.objectContaining({ model: "claude-sonnet-4-5-20250929" }),
+      { asType: "generation" },
     );
-    expect(mockFlushAsync).toHaveBeenCalled();
-    expect(mockShutdownAsync).toHaveBeenCalled();
+    expect(mockForceFlush).toHaveBeenCalled();
+    expect(mockSdkShutdown).toHaveBeenCalled();
   });
 });
 
@@ -140,7 +166,7 @@ describe("processTranscript", () => {
     }
   });
 
-  it("creates traces for each turn", () => {
+  it("creates traces for each turn", async () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },
       {
@@ -161,15 +187,14 @@ describe("processTranscript", () => {
       },
     ]);
 
-    const langfuse = createMockLangfuse();
     const state = {};
-    const result = processTranscript(langfuse, "sess1", filePath, state);
+    const result = await processTranscript("sess1", filePath, state);
 
     expect(result.turns).toBe(2);
-    expect(mockTrace).toHaveBeenCalledTimes(2);
+    expect(mockStartActiveObservation).toHaveBeenCalledTimes(2);
   });
 
-  it("creates tool spans for tool calls", () => {
+  it("creates tool observations for tool calls", async () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "read a file" },
       {
@@ -201,19 +226,22 @@ describe("processTranscript", () => {
       },
     ]);
 
-    const langfuse = createMockLangfuse();
     const state = {};
-    processTranscript(langfuse, "sess1", filePath, state);
+    await processTranscript("sess1", filePath, state);
 
-    expect(mockGenerationSpan).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Tool: Read" }),
+    expect(mockStartChildObservation).toHaveBeenCalledWith(
+      "Tool: Read",
+      expect.objectContaining({
+        input: { path: "/test" },
+      }),
+      { asType: "tool" },
     );
-    expect(mockGenerationSpanEnd).toHaveBeenCalledWith(
+    expect(mockObservationUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ output: "file data" }),
     );
   });
 
-  it("resumes from last processed line", () => {
+  it("resumes from last processed line", async () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },
       {
@@ -233,17 +261,17 @@ describe("processTranscript", () => {
       },
     ]);
 
-    const langfuse = createMockLangfuse();
     const state = { sess1: { last_line: 2, turn_count: 1, updated: "" } };
-    const result = processTranscript(langfuse, "sess1", filePath, state);
+    const result = await processTranscript("sess1", filePath, state);
 
     expect(result.turns).toBe(1);
-    expect(mockTrace).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Turn 2" }),
+    expect(mockStartActiveObservation).toHaveBeenCalledWith(
+      "Turn 2",
+      expect.any(Function),
     );
   });
 
-  it("returns updated state after processing", () => {
+  it("returns updated state after processing", async () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hi" },
       {
@@ -255,9 +283,8 @@ describe("processTranscript", () => {
       },
     ]);
 
-    const langfuse = createMockLangfuse();
     const state = {};
-    const result = processTranscript(langfuse, "sess1", filePath, state);
+    const result = await processTranscript("sess1", filePath, state);
 
     expect(result.updatedState.sess1.last_line).toBe(2);
     expect(result.updatedState.sess1.turn_count).toBe(1);

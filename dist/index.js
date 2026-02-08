@@ -1,7 +1,9 @@
-import { Langfuse } from "langfuse";
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { propagateAttributes, startActiveObservation, startObservation, updateActiveTrace } from "@langfuse/tracing";
 
 //#region src/logger.ts
 const STATE_FILE = join(homedir(), ".claude", "state", "cc-langfuse_state.json");
@@ -215,59 +217,59 @@ function matchToolResults(toolUseBlocks, toolResults) {
 
 //#endregion
 //#region src/tracer.ts
-function createTrace(langfuse, sessionId, turnNum, turn) {
+async function createTrace(sessionId, turnNum, turn) {
 	const userText = getTextContent(turn.user);
 	const lastAssistantText = turn.assistants.length > 0 ? getTextContent(turn.assistants[turn.assistants.length - 1]) : "";
 	const model = turn.assistants[0]?.message?.model ?? "claude";
-	const trace = langfuse.trace({
-		name: `Turn ${turnNum}`,
-		sessionId,
-		input: {
-			role: "user",
-			content: userText
-		},
-		output: {
-			role: "assistant",
-			content: lastAssistantText
-		},
-		metadata: {
-			source: "claude-code",
-			turn_number: turnNum,
-			session_id: sessionId
-		}
-	});
-	for (const assistant of turn.assistants) {
-		const assistantText = getTextContent(assistant);
-		const assistantModel = assistant.message?.model ?? model;
-		const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
-		const generation = trace.generation({
-			name: assistantModel,
-			model: assistantModel,
+	await startActiveObservation(`Turn ${turnNum}`, async () => {
+		updateActiveTrace({
+			sessionId,
 			input: {
 				role: "user",
 				content: userText
 			},
 			output: {
 				role: "assistant",
-				content: assistantText
+				content: lastAssistantText
 			},
-			metadata: { tool_count: toolCalls.length }
+			metadata: {
+				source: "claude-code",
+				turn_number: turnNum,
+				session_id: sessionId
+			}
 		});
-		for (const toolCall of toolCalls) {
-			generation.span({
-				name: `Tool: ${toolCall.name}`,
-				input: toolCall.input,
-				metadata: {
-					tool_name: toolCall.name,
-					tool_id: toolCall.id
-				}
-			}).end({ output: toolCall.output });
-			debug(`Created span for tool: ${toolCall.name}`);
+		for (const assistant of turn.assistants) {
+			const assistantText = getTextContent(assistant);
+			const assistantModel = assistant.message?.model ?? model;
+			const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
+			const generation = startObservation(assistantModel, {
+				model: assistantModel,
+				input: {
+					role: "user",
+					content: userText
+				},
+				output: {
+					role: "assistant",
+					content: assistantText
+				},
+				metadata: { tool_count: toolCalls.length }
+			}, { asType: "generation" });
+			for (const toolCall of toolCalls) {
+				generation.startObservation(`Tool: ${toolCall.name}`, {
+					input: toolCall.input,
+					metadata: {
+						tool_name: toolCall.name,
+						tool_id: toolCall.id
+					}
+				}, { asType: "tool" }).update({ output: toolCall.output }).end();
+				debug(`Created tool observation for: ${toolCall.name}`);
+			}
+			generation.end();
 		}
-	}
+	});
 	debug(`Created trace for turn ${turnNum}`);
 }
-function processTranscript(langfuse, sessionId, transcriptFile, state) {
+async function processTranscript(sessionId, transcriptFile, state) {
 	const sessionState = state[sessionId] ?? {
 		last_line: 0,
 		turn_count: 0
@@ -296,7 +298,9 @@ function processTranscript(langfuse, sessionId, transcriptFile, state) {
 	};
 	debug(`Processing ${newMessages.length} new messages`);
 	const turns = groupTurns(newMessages);
-	for (let i = 0; i < turns.length; i++) createTrace(langfuse, sessionId, turnCount + i + 1, turns[i]);
+	await propagateAttributes({ sessionId }, async () => {
+		for (let i = 0; i < turns.length; i++) await createTrace(sessionId, turnCount + i + 1, turns[i]);
+	});
 	const updatedState = {
 		...state,
 		[sessionId]: {
@@ -313,16 +317,15 @@ function processTranscript(langfuse, sessionId, transcriptFile, state) {
 
 //#endregion
 //#region src/index.ts
-function getLangfuseConfig() {
+function resolveEnvVars() {
 	const publicKey = process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY;
 	const secretKey = process.env.CC_LANGFUSE_SECRET_KEY ?? process.env.LANGFUSE_SECRET_KEY;
-	const baseUrl = process.env.CC_LANGFUSE_HOST ?? process.env.LANGFUSE_HOST ?? "https://cloud.langfuse.com";
-	if (!publicKey || !secretKey) return null;
-	return {
-		publicKey,
-		secretKey,
-		baseUrl
-	};
+	const baseUrl = process.env.CC_LANGFUSE_BASE_URL ?? process.env.LANGFUSE_BASE_URL;
+	if (!publicKey || !secretKey) return false;
+	process.env.LANGFUSE_PUBLIC_KEY = publicKey;
+	process.env.LANGFUSE_SECRET_KEY = secretKey;
+	if (baseUrl) process.env.LANGFUSE_BASE_URL = baseUrl;
+	return true;
 }
 async function hook() {
 	const scriptStart = Date.now();
@@ -331,37 +334,33 @@ async function hook() {
 		debug("Tracing disabled (TRACE_TO_LANGFUSE != true)");
 		return;
 	}
-	const config = getLangfuseConfig();
-	if (!config) {
+	if (!resolveEnvVars()) {
 		log("ERROR", "Langfuse API keys not set (CC_LANGFUSE_PUBLIC_KEY / CC_LANGFUSE_SECRET_KEY)");
 		return;
 	}
-	let langfuse;
-	try {
-		langfuse = new Langfuse(config);
-	} catch (e) {
-		log("ERROR", `Failed to initialize Langfuse client: ${e}`);
-		return;
-	}
+	const spanProcessor = new LangfuseSpanProcessor({ exportMode: "immediate" });
+	const sdk = new NodeSDK({ spanProcessors: [spanProcessor] });
+	sdk.start();
 	const state = loadState();
 	const result = findLatestTranscript();
 	if (!result) {
 		debug("No transcript file found");
+		await sdk.shutdown();
 		return;
 	}
 	const { sessionId, filePath } = result;
 	debug(`Processing session: ${sessionId}`);
 	try {
-		const { turns, updatedState } = processTranscript(langfuse, sessionId, filePath, state);
+		const { turns, updatedState } = await processTranscript(sessionId, filePath, state);
 		saveState(updatedState);
-		await langfuse.flushAsync();
+		await spanProcessor.forceFlush();
 		const duration = (Date.now() - scriptStart) / 1e3;
 		log("INFO", `Processed ${turns} turns in ${duration.toFixed(1)}s`);
 		if (duration > HOOK_WARNING_THRESHOLD_SECONDS) log("WARN", `Hook took ${duration.toFixed(1)}s (>3min), consider optimizing`);
 	} catch (e) {
 		log("ERROR", `Failed to process transcript: ${e}`);
 	} finally {
-		await langfuse.shutdownAsync();
+		await sdk.shutdown();
 	}
 }
 

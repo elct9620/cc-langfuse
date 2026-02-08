@@ -1,5 +1,10 @@
 import { readFileSync } from "node:fs";
-import type { Langfuse } from "langfuse";
+import {
+  startActiveObservation,
+  startObservation,
+  updateActiveTrace,
+  propagateAttributes,
+} from "@langfuse/tracing";
 import { debug } from "./logger.js";
 import {
   getTextContent,
@@ -10,12 +15,11 @@ import {
 import type { Turn } from "./parser.js";
 import type { State } from "./filesystem.js";
 
-function createTrace(
-  langfuse: Langfuse,
+async function createTrace(
   sessionId: string,
   turnNum: number,
   turn: Turn,
-): void {
+): Promise<void> {
   const userText = getTextContent(turn.user);
   const lastAssistantText =
     turn.assistants.length > 0
@@ -23,55 +27,63 @@ function createTrace(
       : "";
   const model = turn.assistants[0]?.message?.model ?? "claude";
 
-  const trace = langfuse.trace({
-    name: `Turn ${turnNum}`,
-    sessionId,
-    input: { role: "user", content: userText },
-    output: { role: "assistant", content: lastAssistantText },
-    metadata: {
-      source: "claude-code",
-      turn_number: turnNum,
-      session_id: sessionId,
-    },
-  });
-
-  for (const assistant of turn.assistants) {
-    const assistantText = getTextContent(assistant);
-    const assistantModel = assistant.message?.model ?? model;
-    const toolUseBlocks = getToolCalls(assistant);
-    const toolCalls = matchToolResults(toolUseBlocks, turn.toolResults);
-
-    const generation = trace.generation({
-      name: assistantModel,
-      model: assistantModel,
+  await startActiveObservation(`Turn ${turnNum}`, async () => {
+    updateActiveTrace({
+      sessionId,
       input: { role: "user", content: userText },
-      output: { role: "assistant", content: assistantText },
-      metadata: { tool_count: toolCalls.length },
+      output: { role: "assistant", content: lastAssistantText },
+      metadata: {
+        source: "claude-code",
+        turn_number: turnNum,
+        session_id: sessionId,
+      },
     });
 
-    for (const toolCall of toolCalls) {
-      const span = generation.span({
-        name: `Tool: ${toolCall.name}`,
-        input: toolCall.input,
-        metadata: {
-          tool_name: toolCall.name,
-          tool_id: toolCall.id,
+    for (const assistant of turn.assistants) {
+      const assistantText = getTextContent(assistant);
+      const assistantModel = assistant.message?.model ?? model;
+      const toolUseBlocks = getToolCalls(assistant);
+      const toolCalls = matchToolResults(toolUseBlocks, turn.toolResults);
+
+      const generation = startObservation(
+        assistantModel,
+        {
+          model: assistantModel,
+          input: { role: "user", content: userText },
+          output: { role: "assistant", content: assistantText },
+          metadata: { tool_count: toolCalls.length },
         },
-      });
-      span.end({ output: toolCall.output });
-      debug(`Created span for tool: ${toolCall.name}`);
+        { asType: "generation" },
+      );
+
+      for (const toolCall of toolCalls) {
+        const tool = generation.startObservation(
+          `Tool: ${toolCall.name}`,
+          {
+            input: toolCall.input,
+            metadata: {
+              tool_name: toolCall.name,
+              tool_id: toolCall.id,
+            },
+          },
+          { asType: "tool" },
+        );
+        tool.update({ output: toolCall.output }).end();
+        debug(`Created tool observation for: ${toolCall.name}`);
+      }
+
+      generation.end();
     }
-  }
+  });
 
   debug(`Created trace for turn ${turnNum}`);
 }
 
-export function processTranscript(
-  langfuse: Langfuse,
+export async function processTranscript(
   sessionId: string,
   transcriptFile: string,
   state: State,
-): { turns: number; updatedState: State } {
+): Promise<{ turns: number; updatedState: State }> {
   const sessionState = state[sessionId] ?? { last_line: 0, turn_count: 0 };
   const lastLine = sessionState.last_line;
   const turnCount = sessionState.turn_count;
@@ -102,9 +114,11 @@ export function processTranscript(
 
   const turns = groupTurns(newMessages);
 
-  for (let i = 0; i < turns.length; i++) {
-    createTrace(langfuse, sessionId, turnCount + i + 1, turns[i]);
-  }
+  await propagateAttributes({ sessionId }, async () => {
+    for (let i = 0; i < turns.length; i++) {
+      await createTrace(sessionId, turnCount + i + 1, turns[i]);
+    }
+  });
 
   const updatedState: State = {
     ...state,

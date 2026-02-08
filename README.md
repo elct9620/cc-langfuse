@@ -38,12 +38,12 @@ Add the following to `.claude/settings.local.json` (not checked into version con
     "TRACE_TO_LANGFUSE": "true",
     "CC_LANGFUSE_PUBLIC_KEY": "pk-lf-...",
     "CC_LANGFUSE_SECRET_KEY": "sk-lf-...",
-    "CC_LANGFUSE_HOST": "https://cloud.langfuse.com"
+    "CC_LANGFUSE_BASE_URL": "https://cloud.langfuse.com"
   }
 }
 ```
 
-`CC_LANGFUSE_HOST` is optional and defaults to `https://cloud.langfuse.com`.
+`CC_LANGFUSE_BASE_URL` is optional and defaults to `https://cloud.langfuse.com`.
 
 `CC_LANGFUSE_*` prefixed variants take precedence over `LANGFUSE_*` variants, so you can use cc-langfuse alongside other Langfuse integrations without conflict.
 
@@ -62,7 +62,7 @@ Add the following to `.claude/settings.local.json` (not checked into version con
 | Session    | Session ID     | Groups all turns in a session |
 | Trace      | `Turn N`       | One user-assistant exchange   |
 | Generation | Model name     | Assistant response content    |
-| Span       | `Tool: {name}` | Tool input and output         |
+| Tool       | `Tool: {name}` | Tool input and output         |
 
 ## Development
 
