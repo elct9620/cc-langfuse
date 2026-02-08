@@ -159,6 +159,55 @@ async function createTrace(
   debug(`Created trace for turn ${turnNum}`);
 }
 
+function parseNewMessages(
+  transcriptFile: string,
+  lastLine: number,
+): { messages: Message[]; lineOffsets: number[] } | null {
+  const lines = readFileSync(transcriptFile, "utf8").trim().split("\n");
+  const totalLines = lines.length;
+
+  if (lastLine >= totalLines) {
+    debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
+    return null;
+  }
+
+  const messages: Message[] = [];
+  const lineOffsets: number[] = [];
+  for (let i = lastLine; i < totalLines; i++) {
+    try {
+      messages.push(JSON.parse(lines[i]));
+      lineOffsets.push(i + 1);
+    } catch (e) {
+      // Malformed JSON lines are expected in incomplete transcripts
+      debug(`Skipping line ${i}: ${e}`);
+      continue;
+    }
+  }
+
+  return messages.length > 0 ? { messages, lineOffsets } : null;
+}
+
+function computeUpdatedState(
+  state: State,
+  sessionId: string,
+  turnCount: number,
+  newTurns: number,
+  consumed: number,
+  lineOffsets: number[],
+  lastLine: number,
+): State {
+  const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
+
+  return {
+    ...state,
+    [sessionId]: {
+      last_line: newLastLine,
+      turn_count: turnCount + newTurns,
+      updated: new Date().toISOString(),
+    },
+  };
+}
+
 export async function processTranscript(
   sessionId: string,
   transcriptFile: string,
@@ -168,34 +217,12 @@ export async function processTranscript(
   const lastLine = sessionState.last_line;
   const turnCount = sessionState.turn_count;
 
-  const lines = readFileSync(transcriptFile, "utf8").trim().split("\n");
-  const totalLines = lines.length;
+  const parsed = parseNewMessages(transcriptFile, lastLine);
+  if (!parsed) return { turns: 0, updatedState: state };
 
-  if (lastLine >= totalLines) {
-    debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
-    return { turns: 0, updatedState: state };
-  }
+  debug(`Processing ${parsed.messages.length} new messages`);
 
-  // Parse new messages
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const newMessages: Record<string, any>[] = [];
-  const lineOffsets: number[] = [];
-  for (let i = lastLine; i < totalLines; i++) {
-    try {
-      newMessages.push(JSON.parse(lines[i]));
-      lineOffsets.push(i + 1);
-    } catch (e) {
-      debug(`Skipping line ${i}: ${e}`);
-      continue;
-    }
-  }
-
-  if (newMessages.length === 0) return { turns: 0, updatedState: state };
-
-  debug(`Processing ${newMessages.length} new messages`);
-
-  const { turns, consumed } = groupTurns(newMessages);
-
+  const { turns, consumed } = groupTurns(parsed.messages);
   if (turns.length === 0) return { turns: 0, updatedState: state };
 
   await propagateAttributes({ sessionId }, async () => {
@@ -204,16 +231,15 @@ export async function processTranscript(
     }
   });
 
-  const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
-
-  const updatedState: State = {
-    ...state,
-    [sessionId]: {
-      last_line: newLastLine,
-      turn_count: turnCount + turns.length,
-      updated: new Date().toISOString(),
-    },
-  };
+  const updatedState = computeUpdatedState(
+    state,
+    sessionId,
+    turnCount,
+    turns.length,
+    consumed,
+    parsed.lineOffsets,
+    lastLine,
+  );
 
   return { turns: turns.length, updatedState };
 }
