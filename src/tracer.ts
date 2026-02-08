@@ -11,9 +11,8 @@ import {
   getTimestamp,
   getToolCalls,
   getUsage,
-  matchToolResults,
-  groupTurns,
-} from "./parser.js";
+} from "./content.js";
+import { matchToolResults, groupTurns } from "./parser.js";
 import type { Turn, Message } from "./types.js";
 import type { State } from "./filesystem.js";
 
