@@ -22,7 +22,7 @@ A Node.js CLI hook tool that sends Claude Code session data to Langfuse, enablin
 
 - Claude Code's `Stop` hook triggers `pnpm dlx github:elct9620/cc-langfuse`, sending session data to Langfuse.
 - No local script files are installed; all execution happens via `pnpm dlx`.
-- Traces appear in Langfuse with session, turn, generation, and tool span structure.
+- Traces appear in Langfuse with session, turn, generation, and tool observation structure.
 
 ---
 
@@ -61,7 +61,7 @@ Tracing is opt-in per project. Users add this to the project's `.claude/settings
     "TRACE_TO_LANGFUSE": "true",
     "LANGFUSE_PUBLIC_KEY": "pk-lf-...",
     "LANGFUSE_SECRET_KEY": "sk-lf-...",
-    "LANGFUSE_HOST": "https://cloud.langfuse.com"
+    "LANGFUSE_BASE_URL": "https://cloud.langfuse.com"
   }
 }
 ```
@@ -87,14 +87,22 @@ Exits immediately if `TRACE_TO_LANGFUSE` is not `"true"`.
 ```
 Session (Session ID)
 └── Trace: "Turn N"
-    └── Generation: "{model}"
-        └── Span: "Tool: {name}"
+    └── Generation: "{model}"          (asType: "generation")
+        └── Tool: "Tool: {name}"       (asType: "tool")
 ```
 
+Each level carries the following data:
+
+| Level      | input                                | output                             |
+| ---------- | ------------------------------------ | ---------------------------------- |
+| Trace      | User message                         | Last Generation's assistant text   |
+| Generation | User message (first Generation only) | Assistant text for that invocation |
+| Tool       | Tool call arguments                  | Tool execution result              |
+
 - **Session** — Groups all turns by the transcript's session ID, corresponding to one Claude Code conversation
-- **Trace** — One Turn (a user → assistant exchange), named `Turn N`
-- **Generation** — One model invocation, named after the model; a single Turn may contain multiple Generations (e.g. the model calls a tool and then responds again)
-- **Span** — One tool execution, named `Tool: {name}`; parented under the Generation that initiated the tool call
+- **Trace** — One Turn (a user → assistant exchange), named `Turn N`. `output` is the final response the user sees.
+- **Generation** (`asType: "generation"`) — One model invocation, named after the model. A single Turn may contain multiple Generations when the model calls tools and responds again. Only the first Generation carries `input` (the user's message). Subsequent Generations omit `input`; their context (tool results) is already captured in the preceding Generation's Tool observations.
+- **Tool** (`asType: "tool"`) — One tool execution, named `Tool: {name}`; parented under the Generation that initiated the tool call
 
 ### Error Scenarios
 
@@ -108,23 +116,24 @@ Session (Session ID)
 
 ## Technical Decisions
 
-| Decision        | Choice                                    | Reason                                                                         |
-| --------------- | ----------------------------------------- | ------------------------------------------------------------------------------ |
-| Hook type       | `Stop` only                               | Matches official integration; transcript is complete at stop time              |
-| Execution model | Always via `pnpm dlx`                     | No local install required; version pinning via git ref                         |
-| Language        | TypeScript (compiled to JavaScript)       | Type safety; compiled to ES Modules for runtime                                |
-| Runtime         | Node.js (ES Modules)                      | Matches project ecosystem; available where Claude Code runs                    |
-| Bundler         | Rolldown → single `dist/index.js`         | Single-file output reduces `pnpm dlx` install time and simplifies distribution |
-| Langfuse SDK    | `langfuse` npm package                    | Declared as dependency, resolved by `pnpm dlx`                                 |
-| State file      | `~/.claude/state/cc-langfuse_state.json`  | Follows Claude Code convention for state storage                               |
-| Log file        | `~/.claude/state/cc-langfuse_hook.log`    | Follows Claude Code convention for log storage                                 |
-| Credentials     | Per-project `.claude/settings.local.json` | Opt-in per project; follows official pattern                                   |
+| Decision        | Choice                                     | Reason                                                                         |
+| --------------- | ------------------------------------------ | ------------------------------------------------------------------------------ |
+| Hook type       | `Stop` only                                | Matches official integration; transcript is complete at stop time              |
+| Execution model | Always via `pnpm dlx`                      | No local install required; version pinning via git ref                         |
+| Language        | TypeScript (compiled to JavaScript)        | Type safety; compiled to ES Modules for runtime                                |
+| Runtime         | Node.js (ES Modules)                       | Matches project ecosystem; available where Claude Code runs                    |
+| Bundler         | Rolldown → single `dist/index.js`          | Single-file output reduces `pnpm dlx` install time and simplifies distribution |
+| Langfuse SDK    | v4 (`@langfuse/tracing`, `@langfuse/otel`) | Supports semantic observation types (generation, tool); requires OpenTelemetry |
+| State file      | `~/.claude/state/cc-langfuse_state.json`   | Follows Claude Code convention for state storage                               |
+| Log file        | `~/.claude/state/cc-langfuse_hook.log`     | Follows Claude Code convention for log storage                                 |
+| Credentials     | Per-project `.claude/settings.local.json`  | Opt-in per project; follows official pattern                                   |
 
 ## Terminology
 
-| Term       | Definition                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------- |
-| Turn       | One user message followed by all assistant responses and tool invocations until the next user message |
-| Generation | One model invocation and its response; a single Turn may contain multiple Generations                 |
-| Transcript | The `.jsonl` file Claude Code writes for each session in `~/.claude/projects/`                        |
-| Hook       | A command Claude Code runs at specific lifecycle events (here: `Stop`)                                |
+| Term       | Definition                                                                                                     |
+| ---------- | -------------------------------------------------------------------------------------------------------------- |
+| Turn       | One user message followed by all assistant responses and tool invocations until the next user message          |
+| Generation | One model invocation and its response (`asType: "generation"`); a single Turn may contain multiple Generations |
+| Tool       | One tool execution observation (`asType: "tool"`); parented under the Generation that invoked it               |
+| Transcript | The `.jsonl` file Claude Code writes for each session in `~/.claude/projects/`                                 |
+| Hook       | A command Claude Code runs at specific lifecycle events (here: `Stop`)                                         |
