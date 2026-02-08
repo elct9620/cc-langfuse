@@ -84,41 +84,47 @@ Exits immediately if `TRACE_TO_LANGFUSE` is not `"true"`.
 
 ### Trace Structure in Langfuse
 
-| Level      | Name                       | Content                                   |
-| ---------- | -------------------------- | ----------------------------------------- |
-| Session    | Session ID from transcript | Groups all turns in a Claude Code session |
-| Trace      | `Turn N`                   | One user-assistant exchange               |
-| Generation | Model name                 | Assistant response content                |
-| Span       | `Tool: {name}`             | Tool input and output                     |
+```
+Session (Session ID)
+└── Trace: "Turn N"
+    └── Generation: "{model}"
+        └── Span: "Tool: {name}"
+```
+
+- **Session** — Groups all turns by the transcript's session ID, corresponding to one Claude Code conversation
+- **Trace** — One Turn (a user → assistant exchange), named `Turn N`
+- **Generation** — One model invocation, named after the model; a single Turn may contain multiple Generations (e.g. the model calls a tool and then responds again)
+- **Span** — One tool execution, named `Tool: {name}`; parented under the Generation that initiated the tool call
 
 ### Error Scenarios
 
-| Scenario                    | Behavior                                                                                 |
-| --------------------------- | ---------------------------------------------------------------------------------------- |
-| Transcript file not found   | Exit silently (no error to avoid disrupting Claude Code)                                 |
-| Langfuse API unreachable    | Log error to `~/.claude/state/cc-langfuse_hook.log`, exit without disrupting Claude Code |
-| State file corrupted or missing | Reset state, reprocess from beginning of current transcript                          |
+| Scenario                        | Behavior                                                                                 |
+| ------------------------------- | ---------------------------------------------------------------------------------------- |
+| Transcript file not found       | Exit silently (no error to avoid disrupting Claude Code)                                 |
+| Langfuse API unreachable        | Log error to `~/.claude/state/cc-langfuse_hook.log`, exit without disrupting Claude Code |
+| State file corrupted or missing | Reset state, reprocess from beginning of current transcript                              |
 
 ---
 
 ## Technical Decisions
 
-| Decision        | Choice                                    | Reason                                                            |
-| --------------- | ----------------------------------------- | ----------------------------------------------------------------- |
-| Hook type       | `Stop` only                               | Matches official integration; transcript is complete at stop time |
-| Execution model | Always via `pnpm dlx`                     | No local install required; version pinning via git ref            |
-| Language        | TypeScript (compiled to JavaScript)       | Type safety; compiled to ES Modules for runtime                   |
-| Runtime         | Node.js (ES Modules)                      | Matches project ecosystem; available where Claude Code runs       |
+| Decision        | Choice                                    | Reason                                                                         |
+| --------------- | ----------------------------------------- | ------------------------------------------------------------------------------ |
+| Hook type       | `Stop` only                               | Matches official integration; transcript is complete at stop time              |
+| Execution model | Always via `pnpm dlx`                     | No local install required; version pinning via git ref                         |
+| Language        | TypeScript (compiled to JavaScript)       | Type safety; compiled to ES Modules for runtime                                |
+| Runtime         | Node.js (ES Modules)                      | Matches project ecosystem; available where Claude Code runs                    |
 | Bundler         | Rolldown → single `dist/index.js`         | Single-file output reduces `pnpm dlx` install time and simplifies distribution |
-| Langfuse SDK    | `langfuse` npm package                    | Declared as dependency, resolved by `pnpm dlx`                    |
-| State file      | `~/.claude/state/cc-langfuse_state.json`  | Follows Claude Code convention for state storage                  |
-| Log file        | `~/.claude/state/cc-langfuse_hook.log`    | Follows Claude Code convention for log storage                    |
-| Credentials     | Per-project `.claude/settings.local.json` | Opt-in per project; follows official pattern                      |
+| Langfuse SDK    | `langfuse` npm package                    | Declared as dependency, resolved by `pnpm dlx`                                 |
+| State file      | `~/.claude/state/cc-langfuse_state.json`  | Follows Claude Code convention for state storage                               |
+| Log file        | `~/.claude/state/cc-langfuse_hook.log`    | Follows Claude Code convention for log storage                                 |
+| Credentials     | Per-project `.claude/settings.local.json` | Opt-in per project; follows official pattern                                   |
 
 ## Terminology
 
 | Term       | Definition                                                                                            |
 | ---------- | ----------------------------------------------------------------------------------------------------- |
 | Turn       | One user message followed by all assistant responses and tool invocations until the next user message |
+| Generation | One model invocation and its response; a single Turn may contain multiple Generations                 |
 | Transcript | The `.jsonl` file Claude Code writes for each session in `~/.claude/projects/`                        |
 | Hook       | A command Claude Code runs at specific lifecycle events (here: `Stop`)                                |
