@@ -7,7 +7,8 @@
     "cc-langfuse": "./bin/cli.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rolldown -c",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@types/node": "^25.2.2",
     "prettier": "^3.8.1",
+    "rolldown": "1.0.0-rc.3",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
