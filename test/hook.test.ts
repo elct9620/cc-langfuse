@@ -111,7 +111,7 @@ afterEach(() => {
 // Import after mocks
 const { hook } = await import("../src/index.js");
 const { processTranscript, processTranscriptWithRecovery } =
-  await import("../src/tracer.js");
+  await import("../src/processor.js");
 const { loadState, saveState, findPreviousSession } =
   await import("../src/filesystem.js");
 const { NodeSDK } = await import("@opentelemetry/sdk-node");

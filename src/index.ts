@@ -3,7 +3,10 @@ import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { log, debug, HOOK_WARNING_THRESHOLD_SECONDS } from "./logger.js";
 import { loadState, saveState, findPreviousSession } from "./filesystem.js";
 import type { State } from "./filesystem.js";
-import { processTranscript, processTranscriptWithRecovery } from "./tracer.js";
+import {
+  processTranscript,
+  processTranscriptWithRecovery,
+} from "./processor.js";
 
 interface HookInput {
   session_id: string;
