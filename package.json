@@ -7,6 +7,7 @@
     "cc-langfuse": "./bin/cli.js"
   },
   "scripts": {
+    "build": "tsc",
     "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
@@ -16,7 +17,9 @@
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.28.0",
   "devDependencies": {
+    "@types/node": "^25.2.2",
     "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
   "dependencies": {
