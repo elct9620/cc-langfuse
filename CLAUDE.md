@@ -25,13 +25,13 @@ cc-langfuse is a Node.js CLI hook tool for Claude Code that parses `.jsonl` tran
 
 ### Source Modules
 
-| File | Responsibility |
-|------|----------------|
-| `src/logger.ts` | Constants (STATE_FILE, LOG_FILE, DEBUG, HOOK_WARNING_THRESHOLD_SECONDS) + file logging |
-| `src/parser.ts` | JSONL message parsing, turn grouping, content block types + type guards, tool result matching |
-| `src/filesystem.ts` | State persistence (load/save) + transcript file discovery |
-| `src/tracer.ts` | Langfuse trace/generation/span creation from parsed turns |
-| `src/index.ts` | Main `hook()` entry point, orchestrates all modules |
+| File                | Responsibility                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| `src/logger.ts`     | Constants (STATE_FILE, LOG_FILE, DEBUG, HOOK_WARNING_THRESHOLD_SECONDS) + file logging        |
+| `src/parser.ts`     | JSONL message parsing, turn grouping, content block types + type guards, tool result matching |
+| `src/filesystem.ts` | State persistence (load/save) + transcript file discovery                                     |
+| `src/tracer.ts`     | Langfuse trace/generation/span creation from parsed turns                                     |
+| `src/index.ts`      | Main `hook()` entry point, orchestrates all modules                                           |
 
 ### Hook Flow
 
@@ -46,21 +46,21 @@ Triggered by Claude Code `Stop` hook via `pnpm dlx github:elct9620/cc-langfuse`:
 
 ### Trace Structure
 
-| Level      | Name           | Content                         |
-| ---------- | -------------- | ------------------------------- |
-| Session    | Session ID     | Groups all turns in a session   |
-| Trace      | `Turn N`       | One user-assistant exchange     |
-| Generation | Model name     | Assistant response content      |
-| Span       | `Tool: {name}` | Tool input and output           |
+| Level      | Parent     | Name           | Content                              |
+| ---------- | ---------- | -------------- | ------------------------------------ |
+| Session    |            | Session ID     | Groups all turns in a session        |
+| Trace      | Session    | `Turn N`       | One user-assistant exchange          |
+| Generation | Trace      | Model name     | Assistant response (one per message) |
+| Span       | Generation | `Tool: {name}` | Tool input and output                |
 
 ### Environment Variables
 
-| Variable | Purpose |
-|----------|---------|
-| `TRACE_TO_LANGFUSE` | Must be `"true"` to enable tracing |
-| `CC_LANGFUSE_PUBLIC_KEY` / `LANGFUSE_PUBLIC_KEY` | Langfuse public API key |
-| `CC_LANGFUSE_SECRET_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse secret API key |
-| `CC_LANGFUSE_HOST` / `LANGFUSE_HOST` | Langfuse host (default: `https://cloud.langfuse.com`) |
+| Variable                                         | Purpose                                               |
+| ------------------------------------------------ | ----------------------------------------------------- |
+| `TRACE_TO_LANGFUSE`                              | Must be `"true"` to enable tracing                    |
+| `CC_LANGFUSE_PUBLIC_KEY` / `LANGFUSE_PUBLIC_KEY` | Langfuse public API key                               |
+| `CC_LANGFUSE_SECRET_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse secret API key                               |
+| `CC_LANGFUSE_HOST` / `LANGFUSE_HOST`             | Langfuse host (default: `https://cloud.langfuse.com`) |
 
 `CC_LANGFUSE_*` prefixed variants take precedence over `LANGFUSE_*` variants.
 

@@ -1,10 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  mkdirSync,
-  writeFileSync,
-  rmSync,
-  existsSync,
-} from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -17,12 +12,13 @@ vi.mock("node:os", async (importOriginal) => {
 });
 
 // Mock Langfuse
-const mockGeneration = vi.fn().mockReturnValue({});
-const mockSpanEnd = vi.fn().mockReturnThis();
-const mockSpan = vi.fn().mockReturnValue({ end: mockSpanEnd });
+const mockGenerationSpanEnd = vi.fn().mockReturnThis();
+const mockGenerationSpan = vi
+  .fn()
+  .mockReturnValue({ end: mockGenerationSpanEnd });
+const mockGeneration = vi.fn().mockReturnValue({ span: mockGenerationSpan });
 const mockTrace = vi.fn().mockReturnValue({
   generation: mockGeneration,
-  span: mockSpan,
 });
 const mockFlushAsync = vi.fn().mockResolvedValue(undefined);
 const mockShutdownAsync = vi.fn().mockResolvedValue(undefined);
@@ -41,6 +37,21 @@ vi.mock("langfuse", () => ({
   }),
 }));
 
+// Isolate tests from host environment variables
+const LANGFUSE_ENV_KEYS = [
+  "TRACE_TO_LANGFUSE",
+  "CC_LANGFUSE_PUBLIC_KEY",
+  "CC_LANGFUSE_SECRET_KEY",
+  "CC_LANGFUSE_HOST",
+  "LANGFUSE_PUBLIC_KEY",
+  "LANGFUSE_SECRET_KEY",
+  "LANGFUSE_HOST",
+] as const;
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 // Import after mocks
 const { hook } = await import("../src/index.js");
 const { processTranscript } = await import("../src/tracer.js");
@@ -58,6 +69,9 @@ function setupTranscript(lines: object[]): string {
 describe("hook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    for (const key of LANGFUSE_ENV_KEYS) {
+      vi.stubEnv(key, "");
+    }
     mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
   });
 
@@ -65,9 +79,6 @@ describe("hook", () => {
     if (existsSync(testDir)) {
       rmSync(testDir, { recursive: true, force: true });
     }
-    delete process.env.TRACE_TO_LANGFUSE;
-    delete process.env.CC_LANGFUSE_PUBLIC_KEY;
-    delete process.env.CC_LANGFUSE_SECRET_KEY;
   });
 
   it("exits silently when TRACE_TO_LANGFUSE is not set", async () => {
@@ -76,15 +87,15 @@ describe("hook", () => {
   });
 
   it("exits silently when API keys are missing", async () => {
-    process.env.TRACE_TO_LANGFUSE = "true";
+    vi.stubEnv("TRACE_TO_LANGFUSE", "true");
     await hook();
     expect(Langfuse).not.toHaveBeenCalled();
   });
 
   it("initializes Langfuse and processes transcript", async () => {
-    process.env.TRACE_TO_LANGFUSE = "true";
-    process.env.CC_LANGFUSE_PUBLIC_KEY = "pk-test";
-    process.env.CC_LANGFUSE_SECRET_KEY = "sk-test";
+    vi.stubEnv("TRACE_TO_LANGFUSE", "true");
+    vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
+    vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
 
     setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },
@@ -194,10 +205,10 @@ describe("processTranscript", () => {
     const state = {};
     processTranscript(langfuse, "sess1", filePath, state);
 
-    expect(mockSpan).toHaveBeenCalledWith(
+    expect(mockGenerationSpan).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Tool: Read" }),
     );
-    expect(mockSpanEnd).toHaveBeenCalledWith(
+    expect(mockGenerationSpanEnd).toHaveBeenCalledWith(
       expect.objectContaining({ output: "file data" }),
     );
   });

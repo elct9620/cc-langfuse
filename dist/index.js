@@ -215,19 +215,10 @@ function matchToolResults(toolUseBlocks, toolResults) {
 
 //#endregion
 //#region src/tracer.ts
-function extractTurnMetadata(turn) {
-	return {
-		userText: getTextContent(turn.user),
-		assistantText: turn.assistants.length > 0 ? getTextContent(turn.assistants[turn.assistants.length - 1]) : "",
-		model: turn.assistants[0]?.message?.model ?? "claude"
-	};
-}
-function collectToolCalls(turn) {
-	return matchToolResults(turn.assistants.flatMap(getToolCalls), turn.toolResults);
-}
 function createTrace(langfuse, sessionId, turnNum, turn) {
-	const { userText, assistantText, model } = extractTurnMetadata(turn);
-	const allToolCalls = collectToolCalls(turn);
+	const userText = getTextContent(turn.user);
+	const lastAssistantText = turn.assistants.length > 0 ? getTextContent(turn.assistants[turn.assistants.length - 1]) : "";
+	const model = turn.assistants[0]?.message?.model ?? "claude";
 	const trace = langfuse.trace({
 		name: `Turn ${turnNum}`,
 		sessionId,
@@ -237,7 +228,7 @@ function createTrace(langfuse, sessionId, turnNum, turn) {
 		},
 		output: {
 			role: "assistant",
-			content: assistantText
+			content: lastAssistantText
 		},
 		metadata: {
 			source: "claude-code",
@@ -245,29 +236,34 @@ function createTrace(langfuse, sessionId, turnNum, turn) {
 			session_id: sessionId
 		}
 	});
-	trace.generation({
-		name: model,
-		model,
-		input: {
-			role: "user",
-			content: userText
-		},
-		output: {
-			role: "assistant",
-			content: assistantText
-		},
-		metadata: { tool_count: allToolCalls.length }
-	});
-	for (const toolCall of allToolCalls) {
-		trace.span({
-			name: `Tool: ${toolCall.name}`,
-			input: toolCall.input,
-			metadata: {
-				tool_name: toolCall.name,
-				tool_id: toolCall.id
-			}
-		}).end({ output: toolCall.output });
-		debug(`Created span for tool: ${toolCall.name}`);
+	for (const assistant of turn.assistants) {
+		const assistantText = getTextContent(assistant);
+		const assistantModel = assistant.message?.model ?? model;
+		const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
+		const generation = trace.generation({
+			name: assistantModel,
+			model: assistantModel,
+			input: {
+				role: "user",
+				content: userText
+			},
+			output: {
+				role: "assistant",
+				content: assistantText
+			},
+			metadata: { tool_count: toolCalls.length }
+		});
+		for (const toolCall of toolCalls) {
+			generation.span({
+				name: `Tool: ${toolCall.name}`,
+				input: toolCall.input,
+				metadata: {
+					tool_name: toolCall.name,
+					tool_id: toolCall.id
+				}
+			}).end({ output: toolCall.output });
+			debug(`Created span for tool: ${toolCall.name}`);
+		}
 	}
 	debug(`Created trace for turn ${turnNum}`);
 }

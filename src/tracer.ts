@@ -7,27 +7,8 @@ import {
   matchToolResults,
   groupTurns,
 } from "./parser.js";
-import type { Turn, ToolCall } from "./parser.js";
+import type { Turn } from "./parser.js";
 import type { State } from "./filesystem.js";
-
-function extractTurnMetadata(turn: Turn): {
-  userText: string;
-  assistantText: string;
-  model: string;
-} {
-  const userText = getTextContent(turn.user);
-  const assistantText =
-    turn.assistants.length > 0
-      ? getTextContent(turn.assistants[turn.assistants.length - 1])
-      : "";
-  const model = turn.assistants[0]?.message?.model ?? "claude";
-  return { userText, assistantText, model };
-}
-
-function collectToolCalls(turn: Turn): ToolCall[] {
-  const toolUseBlocks = turn.assistants.flatMap(getToolCalls);
-  return matchToolResults(toolUseBlocks, turn.toolResults);
-}
 
 function createTrace(
   langfuse: Langfuse,
@@ -35,14 +16,18 @@ function createTrace(
   turnNum: number,
   turn: Turn,
 ): void {
-  const { userText, assistantText, model } = extractTurnMetadata(turn);
-  const allToolCalls = collectToolCalls(turn);
+  const userText = getTextContent(turn.user);
+  const lastAssistantText =
+    turn.assistants.length > 0
+      ? getTextContent(turn.assistants[turn.assistants.length - 1])
+      : "";
+  const model = turn.assistants[0]?.message?.model ?? "claude";
 
   const trace = langfuse.trace({
     name: `Turn ${turnNum}`,
     sessionId,
     input: { role: "user", content: userText },
-    output: { role: "assistant", content: assistantText },
+    output: { role: "assistant", content: lastAssistantText },
     metadata: {
       source: "claude-code",
       turn_number: turnNum,
@@ -50,25 +35,32 @@ function createTrace(
     },
   });
 
-  trace.generation({
-    name: model,
-    model,
-    input: { role: "user", content: userText },
-    output: { role: "assistant", content: assistantText },
-    metadata: { tool_count: allToolCalls.length },
-  });
+  for (const assistant of turn.assistants) {
+    const assistantText = getTextContent(assistant);
+    const assistantModel = assistant.message?.model ?? model;
+    const toolUseBlocks = getToolCalls(assistant);
+    const toolCalls = matchToolResults(toolUseBlocks, turn.toolResults);
 
-  for (const toolCall of allToolCalls) {
-    const span = trace.span({
-      name: `Tool: ${toolCall.name}`,
-      input: toolCall.input,
-      metadata: {
-        tool_name: toolCall.name,
-        tool_id: toolCall.id,
-      },
+    const generation = trace.generation({
+      name: assistantModel,
+      model: assistantModel,
+      input: { role: "user", content: userText },
+      output: { role: "assistant", content: assistantText },
+      metadata: { tool_count: toolCalls.length },
     });
-    span.end({ output: toolCall.output });
-    debug(`Created span for tool: ${toolCall.name}`);
+
+    for (const toolCall of toolCalls) {
+      const span = generation.span({
+        name: `Tool: ${toolCall.name}`,
+        input: toolCall.input,
+        metadata: {
+          tool_name: toolCall.name,
+          tool_id: toolCall.id,
+        },
+      });
+      span.end({ output: toolCall.output });
+      debug(`Created span for tool: ${toolCall.name}`);
+    }
   }
 
   debug(`Created trace for turn ${turnNum}`);
@@ -88,9 +80,7 @@ export function processTranscript(
   const totalLines = lines.length;
 
   if (lastLine >= totalLines) {
-    debug(
-      `No new lines to process (last: ${lastLine}, total: ${totalLines})`,
-    );
+    debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
     return { turns: 0, updatedState: state };
   }
 
