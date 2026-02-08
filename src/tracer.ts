@@ -88,20 +88,50 @@ function createGenerationObservation(ctx: GenerationContext): void {
   generation.end(genEnd);
 }
 
-async function createTrace(
-  sessionId: string,
-  turnNum: number,
-  turn: Turn,
-): Promise<void> {
+function computeTraceContext(turn: Turn) {
   const userText = getTextContent(turn.user);
   const lastAssistantText =
     turn.assistants.length > 0
       ? getTextContent(turn.assistants[turn.assistants.length - 1])
       : "";
   const model = turn.assistants[0]?.message?.model ?? "claude";
-
   const traceStart = getTimestamp(turn.user);
   const traceEnd = computeTraceEnd([...turn.assistants, ...turn.toolResults]);
+
+  return { userText, lastAssistantText, model, traceStart, traceEnd };
+}
+
+function createGenerations(
+  parentObservation: LangfuseObservation,
+  turn: Turn,
+  model: string,
+  userText: string,
+): void {
+  for (let i = 0; i < turn.assistants.length; i++) {
+    const nextGenStart =
+      i + 1 < turn.assistants.length
+        ? getTimestamp(turn.assistants[i + 1])
+        : undefined;
+
+    createGenerationObservation({
+      parentObservation,
+      assistant: turn.assistants[i],
+      index: i,
+      turn,
+      model,
+      userText,
+      genEnd: nextGenStart ?? new Date(),
+    });
+  }
+}
+
+async function createTrace(
+  sessionId: string,
+  turnNum: number,
+  turn: Turn,
+): Promise<void> {
+  const { userText, lastAssistantText, model, traceStart, traceEnd } =
+    computeTraceContext(turn);
   const hasTraceStart = traceStart !== undefined;
 
   await startActiveObservation(
@@ -133,22 +163,7 @@ async function createTrace(
         },
       );
 
-      for (let i = 0; i < turn.assistants.length; i++) {
-        const nextGenStart =
-          i + 1 < turn.assistants.length
-            ? getTimestamp(turn.assistants[i + 1])
-            : undefined;
-
-        createGenerationObservation({
-          parentObservation: rootSpan,
-          assistant: turn.assistants[i],
-          index: i,
-          turn,
-          model,
-          userText,
-          genEnd: nextGenStart ?? new Date(),
-        });
-      }
+      createGenerations(rootSpan, turn, model, userText);
 
       if (traceEnd) {
         rootSpan.end(traceEnd);
