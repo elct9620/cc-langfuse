@@ -85,8 +85,9 @@ export async function hook(): Promise<void> {
         `Hook took ${duration.toFixed(1)}s (>3min), consider optimizing`,
       );
     }
-  } catch (e) {
-    log("ERROR", `Failed to process transcript: ${e}`);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    log("ERROR", `Failed to process transcript: ${message}`);
   } finally {
     await sdk.shutdown();
   }

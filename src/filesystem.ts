@@ -18,6 +18,13 @@ export interface SessionState {
 
 export type State = Record<string, SessionState>;
 
+/**
+ * Loads persisted session state from disk.
+ *
+ * Returns empty state on any failure (missing file, corrupt JSON, permission
+ * errors) — this is intentional graceful degradation so the hook can always
+ * proceed by reprocessing from scratch rather than crashing.
+ */
 export function loadState(): State {
   try {
     return JSON.parse(readFileSync(STATE_FILE, "utf8")) as State;
