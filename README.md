@@ -76,6 +76,28 @@ pnpm typecheck    # Type-check with tsc
 pnpm format       # Format with prettier
 ```
 
+### Force Fetching Latest Version
+
+`pnpm dlx` caches downloaded packages. During development, if you need to ensure the hook always runs the latest published version, set `dlx-cache-max-age` to `0`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm --config.dlx-cache-max-age=0 dlx github:elct9620/cc-langfuse"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
 ## License
 
 [Apache-2.0](LICENSE)
