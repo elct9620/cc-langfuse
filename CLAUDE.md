@@ -25,13 +25,26 @@ cc-langfuse is a Node.js CLI hook tool for Claude Code that parses `.jsonl` tran
 
 ### Source Modules
 
-| File                | Responsibility                                                                                |
-| ------------------- | --------------------------------------------------------------------------------------------- |
-| `src/logger.ts`     | Constants (STATE_FILE, LOG_FILE, DEBUG, HOOK_WARNING_THRESHOLD_SECONDS) + file logging        |
-| `src/parser.ts`     | JSONL message parsing, turn grouping, content block types + type guards, tool result matching |
-| `src/filesystem.ts` | State persistence (load/save) + transcript file discovery                                     |
-| `src/tracer.ts`     | Langfuse trace/generation/tool observation creation from parsed turns                         |
-| `src/index.ts`      | Main `hook()` entry point, orchestrates all modules                                           |
+| File                | Responsibility                                                                                                                    |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `src/types.ts`      | Shared type definitions (Message, ContentBlock variants, ToolCall, Turn, GroupTurnsResult)                                        |
+| `src/content.ts`    | Content helpers: type guards, accessors (getContent, getTextContent, getToolCalls, etc.)                                          |
+| `src/parser.ts`     | Turn grouping (TurnBuilder), assistant part merging, tool result matching; re-exports types + content helpers for backward compat |
+| `src/tracer.ts`     | Langfuse trace/generation/tool observation creation from parsed turns                                                             |
+| `src/filesystem.ts` | State persistence (load/save) + transcript file discovery                                                                         |
+| `src/logger.ts`     | Constants (STATE_FILE, LOG_FILE, DEBUG, HOOK_WARNING_THRESHOLD_SECONDS) + file logging                                            |
+| `src/index.ts`      | Main `hook()` entry point, orchestrates all modules                                                                               |
+
+### Module Dependencies
+
+```
+index.ts → tracer.ts → content.ts → types.ts
+                      → parser.ts  → content.ts
+         → filesystem.ts
+         → logger.ts
+```
+
+`parser.ts` re-exports all types from `types.ts` and all functions from `content.ts`, so existing test imports (`from "../src/parser.js"`) remain valid.
 
 ### Hook Flow
 
