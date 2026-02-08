@@ -104,6 +104,18 @@ Each level carries the following data:
 - **Generation** (`asType: "generation"`) — One model invocation, named after the model. A single Turn may contain multiple Generations when the model calls tools and responds again. Only the first Generation carries `input` (the user's message). Subsequent Generations omit `input`; their context (tool results) is already captured in the preceding Generation's Tool observations.
 - **Tool** (`asType: "tool"`) — One tool execution, named `Tool: {name}`; parented under the Generation that initiated the tool call
 
+#### Timing
+
+Each observation carries start and end timestamps derived from the JSONL transcript's `timestamp` field:
+
+| Level      | startTime                          | endTime                                                 |
+| ---------- | ---------------------------------- | ------------------------------------------------------- |
+| Trace      | User message timestamp             | Last message timestamp in the turn                      |
+| Generation | Assistant message timestamp        | Next Generation's start, or turn end if last Generation |
+| Tool       | Parent assistant message timestamp | Matching tool_result message timestamp                  |
+
+If a message lacks a `timestamp` field, timing for that observation is omitted (SDK defaults to creation time).
+
 ### Error Scenarios
 
 | Scenario                        | Behavior                                                                                 |
@@ -137,3 +149,4 @@ Each level carries the following data:
 | Tool       | One tool execution observation (`asType: "tool"`); parented under the Generation that invoked it               |
 | Transcript | The `.jsonl` file Claude Code writes for each session in `~/.claude/projects/`                                 |
 | Hook       | A command Claude Code runs at specific lifecycle events (here: `Stop`)                                         |
+| Timestamp  | ISO 8601 UTC time recorded on each JSONL message, used to derive observation start/end times                   |
