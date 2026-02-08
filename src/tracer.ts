@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import {
   startActiveObservation,
   startObservation,
@@ -15,6 +14,7 @@ import {
 } from "./content.js";
 import { matchToolResults, groupTurns } from "./parser.js";
 import type { Turn, Message } from "./types.js";
+import { parseNewMessages } from "./filesystem.js";
 import type { State } from "./filesystem.js";
 
 interface GenerationContext {
@@ -184,34 +184,6 @@ async function createTrace(
   );
 
   debug(`Created trace for turn ${turnNum}`);
-}
-
-function parseNewMessages(
-  transcriptFile: string,
-  lastLine: number,
-): { messages: Message[]; lineOffsets: number[] } | null {
-  const lines = readFileSync(transcriptFile, "utf8").trim().split("\n");
-  const totalLines = lines.length;
-
-  if (lastLine >= totalLines) {
-    debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
-    return null;
-  }
-
-  const messages: Message[] = [];
-  const lineOffsets: number[] = [];
-  for (let i = lastLine; i < totalLines; i++) {
-    try {
-      messages.push(JSON.parse(lines[i]));
-      lineOffsets.push(i + 1);
-    } catch (e) {
-      // Malformed JSON lines are expected in incomplete transcripts
-      debug(`Skipping line ${i}: ${e}`);
-      continue;
-    }
-  }
-
-  return messages.length > 0 ? { messages, lineOffsets } : null;
 }
 
 function computeUpdatedState(

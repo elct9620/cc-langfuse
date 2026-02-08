@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { STATE_FILE, debug } from "./logger.js";
+import type { Message } from "./types.js";
 
 export interface SessionState {
   last_line: number;
@@ -63,4 +64,32 @@ export function findPreviousSession(
     debug("Failed to detect previous session from transcript first line");
     return null;
   }
+}
+
+export function parseNewMessages(
+  transcriptFile: string,
+  lastLine: number,
+): { messages: Message[]; lineOffsets: number[] } | null {
+  const lines = readFileSync(transcriptFile, "utf8").trim().split("\n");
+  const totalLines = lines.length;
+
+  if (lastLine >= totalLines) {
+    debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
+    return null;
+  }
+
+  const messages: Message[] = [];
+  const lineOffsets: number[] = [];
+  for (let i = lastLine; i < totalLines; i++) {
+    try {
+      messages.push(JSON.parse(lines[i]));
+      lineOffsets.push(i + 1);
+    } catch (e) {
+      // Malformed JSON lines are expected in incomplete transcripts
+      debug(`Skipping line ${i}: ${e}`);
+      continue;
+    }
+  }
+
+  return messages.length > 0 ? { messages, lineOffsets } : null;
 }
