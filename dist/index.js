@@ -464,7 +464,6 @@ async function readHookInput() {
 }
 function initializeSDK(config) {
 	const spanProcessor = new LangfuseSpanProcessor({
-		exportMode: "immediate",
 		publicKey: config.publicKey,
 		secretKey: config.secretKey,
 		baseUrl: config.baseUrl

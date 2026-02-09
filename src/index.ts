@@ -49,7 +49,6 @@ function initializeSDK(config: LangfuseConfig): {
   spanProcessor: LangfuseSpanProcessor;
 } {
   const spanProcessor = new LangfuseSpanProcessor({
-    exportMode: "immediate",
     publicKey: config.publicKey,
     secretKey: config.secretKey,
     baseUrl: config.baseUrl,

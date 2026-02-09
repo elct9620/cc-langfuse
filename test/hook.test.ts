@@ -161,7 +161,6 @@ describe("hook", () => {
     await hook();
 
     expect(LangfuseSpanProcessor).toHaveBeenCalledWith({
-      exportMode: "immediate",
       publicKey: "pk-test",
       secretKey: "sk-test",
       baseUrl: "https://langfuse.example.com",
@@ -189,7 +188,6 @@ describe("hook", () => {
     await hook();
 
     expect(LangfuseSpanProcessor).toHaveBeenCalledWith({
-      exportMode: "immediate",
       publicKey: "pk-test",
       secretKey: "sk-test",
       baseUrl: undefined,
