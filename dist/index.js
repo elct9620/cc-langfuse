@@ -124,7 +124,6 @@ function getTextContent(msg) {
 	if (!Array.isArray(content)) return "";
 	const parts = [];
 	for (const item of content) if (isTextBlock(item)) parts.push(item.text);
-	else if (typeof item === "string") parts.push(item);
 	return parts.join("\n");
 }
 function getUsage(msg) {
@@ -143,12 +142,11 @@ function getUsage(msg) {
 //#endregion
 //#region src/parser.ts
 function mergeAssistantParts(parts) {
-	if (parts.length === 0) return {};
 	const mergedContent = [];
 	for (const part of parts) {
 		const content = getContent(part);
 		if (Array.isArray(content)) mergedContent.push(...content);
-		else if (content !== void 0 && content !== null) mergedContent.push({
+		else if (content !== void 0) mergedContent.push({
 			type: "text",
 			text: String(content)
 		});
@@ -168,7 +166,6 @@ var AssistantPartAccumulator = class {
 		const id = msg.message?.id;
 		if (!id || id === this.msgId) {
 			this.parts.push(msg);
-			if (id) this.msgId = id;
 			return;
 		}
 		const flushed = this.flush();

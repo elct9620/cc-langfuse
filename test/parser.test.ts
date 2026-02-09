@@ -101,11 +101,6 @@ describe("getTextContent", () => {
     expect(getTextContent(msg)).toBe("line 1\nline 2");
   });
 
-  it("handles string items in content array", () => {
-    const msg = { content: ["hello", "world"] };
-    expect(getTextContent(msg)).toBe("hello\nworld");
-  });
-
   it("returns empty string for missing content", () => {
     expect(getTextContent({})).toBe("");
   });

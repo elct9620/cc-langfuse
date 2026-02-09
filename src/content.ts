@@ -65,8 +65,6 @@ export function getTextContent(msg: Message): string {
   for (const item of content) {
     if (isTextBlock(item)) {
       parts.push(item.text);
-    } else if (typeof item === "string") {
-      parts.push(item);
     }
   }
   return parts.join("\n");
