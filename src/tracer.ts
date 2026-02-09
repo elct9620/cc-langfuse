@@ -104,10 +104,9 @@ function createGenerationObservation(ctx: GenerationContext): void {
 
 function computeTraceContext(turn: Turn) {
   const userText = getTextContent(turn.user);
-  const lastAssistantText =
-    turn.assistants.length > 0
-      ? getTextContent(turn.assistants[turn.assistants.length - 1])
-      : "";
+  const lastAssistantText = getTextContent(
+    turn.assistants[turn.assistants.length - 1],
+  );
   const model = turn.assistants[0]?.message?.model ?? "claude";
   const traceStart = getTimestamp(turn.user);
   const traceEnd = computeTraceEnd([...turn.assistants, ...turn.toolResults]);

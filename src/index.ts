@@ -4,7 +4,6 @@ import { log, debug } from "./logger.js";
 
 const HOOK_WARNING_THRESHOLD_SECONDS = 180;
 import { loadState, saveState, findPreviousSession } from "./filesystem.js";
-import type { State } from "./filesystem.js";
 import {
   processTranscript,
   processTranscriptWithRecovery,
@@ -113,25 +112,16 @@ export async function hook(): Promise<void> {
 
   try {
     const previous = findPreviousSession(filePath, sessionId);
-    let result: { turns: number; updatedState: State } | undefined;
 
-    if (previous) {
-      debug(`Recovering previous session: ${previous.sessionId}`);
-      try {
-        result = await processTranscriptWithRecovery(
+    const result = previous
+      ? await processTranscriptWithRecovery(
           sessionId,
           filePath,
           previous.sessionId,
           previous.transcriptPath,
           state,
-        );
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        log("ERROR", `Failed to recover previous session: ${msg}`);
-      }
-    }
-
-    result ??= await processTranscript(sessionId, filePath, state);
+        )
+      : await processTranscript(sessionId, filePath, state);
 
     const { turns, updatedState } = result;
     saveState(updatedState);

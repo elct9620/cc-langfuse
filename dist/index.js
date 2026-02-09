@@ -323,7 +323,7 @@ function createGenerationObservation(ctx) {
 function computeTraceContext(turn) {
 	return {
 		userText: getTextContent(turn.user),
-		lastAssistantText: turn.assistants.length > 0 ? getTextContent(turn.assistants[turn.assistants.length - 1]) : "",
+		lastAssistantText: getTextContent(turn.assistants[turn.assistants.length - 1]),
 		model: turn.assistants[0]?.message?.model ?? "claude",
 		traceStart: getTimestamp(turn.user),
 		traceEnd: computeTraceEnd([...turn.assistants, ...turn.toolResults])
@@ -508,17 +508,7 @@ async function hook() {
 	debug(`Processing session: ${sessionId}`);
 	try {
 		const previous = findPreviousSession(filePath, sessionId);
-		let result;
-		if (previous) {
-			debug(`Recovering previous session: ${previous.sessionId}`);
-			try {
-				result = await processTranscriptWithRecovery(sessionId, filePath, previous.sessionId, previous.transcriptPath, state);
-			} catch (e) {
-				log("ERROR", `Failed to recover previous session: ${e instanceof Error ? e.message : String(e)}`);
-			}
-		}
-		result ??= await processTranscript(sessionId, filePath, state);
-		const { turns, updatedState } = result;
+		const { turns, updatedState } = previous ? await processTranscriptWithRecovery(sessionId, filePath, previous.sessionId, previous.transcriptPath, state) : await processTranscript(sessionId, filePath, state);
 		saveState(updatedState);
 		const duration = (Date.now() - scriptStart) / 1e3;
 		log("INFO", `Processed ${turns} turns in ${duration.toFixed(1)}s`);
