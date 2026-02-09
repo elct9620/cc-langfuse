@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/elct9620/cc-langfuse/compare/v0.1.1...v0.1.2) (2026-02-09)
+
+
+### Bug Fixes
+
+* **ci:** ignore auto-generated CHANGELOG.md in prettier check ([a110986](https://github.com/elct9620/cc-langfuse/commit/a110986206aef19d2ffab0b0567056283d376120))
+* **release:** use plain version tag format without component prefix ([eb801ee](https://github.com/elct9620/cc-langfuse/commit/eb801eece5769c00272023f02092e5b85caf9cf3))
+
 ## [0.1.1](https://github.com/elct9620/cc-langfuse/compare/cc-langfuse-v0.1.0...cc-langfuse-v0.1.1) (2026-02-09)
 
 
