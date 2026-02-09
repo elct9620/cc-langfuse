@@ -28,6 +28,30 @@ Add the following to your Claude Code settings (`.claude/settings.json`):
 }
 ```
 
+### Version Pinning
+
+By default, `pnpm dlx github:elct9620/cc-langfuse` installs from the latest commit on `main`. To pin to a specific release, append `#<tag>` to the package specifier:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pnpm dlx github:elct9620/cc-langfuse#v0.1.0"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Replace `v0.1.0` with the desired version tag. Available tags can be found on the [releases page](https://github.com/elct9620/cc-langfuse/releases).
+
 ### 2. Set environment variables
 
 Add the following to `.claude/settings.local.json` (not checked into version control):
