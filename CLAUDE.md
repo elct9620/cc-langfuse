@@ -25,22 +25,24 @@ cc-langfuse is a Node.js CLI hook tool for Claude Code that parses `.jsonl` tran
 
 ### Source Modules
 
-| File                | Responsibility                                                                                                                    |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `src/types.ts`      | Shared type definitions (Message, ContentBlock variants, ToolCall, Turn, GroupTurnsResult)                                        |
-| `src/content.ts`    | Content helpers: type guards, accessors (getContent, getTextContent, getToolCalls, etc.)                                          |
-| `src/parser.ts`     | Turn grouping (TurnBuilder), assistant part merging, tool result matching; re-exports types + content helpers for backward compat |
-| `src/tracer.ts`     | Langfuse trace/generation/tool observation creation from parsed turns                                                             |
-| `src/filesystem.ts` | State persistence (load/save), transcript file discovery, transcript reading + state computation                                  |
-| `src/logger.ts`     | Constants (LOG_FILE, DEBUG) + file logging                                                                                        |
-| `src/index.ts`      | Main `hook()` entry point, orchestrates all modules                                                                               |
+| File                | Responsibility                                                                 |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `src/types.ts`      | Shared type definitions (Message, ContentBlock variants, ToolCall, Turn, etc.) |
+| `src/content.ts`    | Content helpers: type guards, accessors (getContent, getTextContent, etc.)     |
+| `src/parser.ts`     | Turn grouping (TurnBuilder), assistant part merging, tool result matching      |
+| `src/tracer.ts`     | Langfuse trace/generation/tool observation creation from parsed turns          |
+| `src/processor.ts`  | Transcript processing orchestration and cross-session recovery                 |
+| `src/filesystem.ts` | State persistence (load/save), transcript file discovery and reading           |
+| `src/logger.ts`     | Constants (LOG_FILE, DEBUG) + file logging                                     |
+| `src/index.ts`      | Main `hook()` entry point, SDK init, env var resolution                        |
 
 ### Module Dependencies
 
 ```
-index.ts → tracer.ts → content.ts → types.ts
-                      → parser.ts  → content.ts
-                      → filesystem.ts → types.ts
+index.ts → processor.ts → parser.ts    → content.ts → types.ts
+                         → tracer.ts   → content.ts
+                                       → parser.ts
+                         → filesystem.ts → types.ts
          → filesystem.ts
          → logger.ts
 ```
