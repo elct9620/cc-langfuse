@@ -281,6 +281,7 @@ function childObservationOptions(parent, startTime) {
 	};
 }
 function createToolObservations(parentObservation, toolCalls, genStart) {
+	let nextStart = genStart;
 	for (const toolCall of toolCalls) {
 		startObservation(`Tool: ${toolCall.name}`, {
 			input: toolCall.input,
@@ -290,8 +291,9 @@ function createToolObservations(parentObservation, toolCalls, genStart) {
 			}
 		}, {
 			asType: "tool",
-			...childObservationOptions(parentObservation, genStart)
+			...childObservationOptions(parentObservation, nextStart)
 		}).update({ output: toolCall.output }).end(toolCall.timestamp);
+		nextStart = toolCall.timestamp ?? nextStart;
 		debug(`Created tool observation for: ${toolCall.name}`);
 	}
 }

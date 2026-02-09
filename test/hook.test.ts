@@ -628,7 +628,7 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    // Tool should have genStart as startTime
+    // Single tool should use genStart as startTime (first tool in sequence)
     expect(mockStartObservation).toHaveBeenCalledWith(
       "Tool: Read",
       expect.objectContaining({
@@ -643,6 +643,78 @@ describe("processTranscript", () => {
     // Tool end should be called with tool_result timestamp
     expect(mockObservationEnd).toHaveBeenCalledWith(
       new Date("2025-01-15T10:00:10Z"),
+    );
+  });
+
+  it("should use sequential startTime for multiple tool observations", async () => {
+    const filePath = setupTranscript([
+      {
+        sessionId: "sess1",
+        type: "user",
+        timestamp: "2025-01-15T10:00:00Z",
+        content: "read two files",
+      },
+      {
+        timestamp: "2025-01-15T10:00:05Z",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [
+            {
+              type: "tool_use",
+              id: "t1",
+              name: "Read",
+              input: { path: "/file1" },
+            },
+            {
+              type: "tool_use",
+              id: "t2",
+              name: "Read",
+              input: { path: "/file2" },
+            },
+          ],
+        },
+      },
+      {
+        type: "user",
+        timestamp: "2025-01-15T10:00:10Z",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "data1" },
+          { type: "tool_result", tool_use_id: "t2", content: "data2" },
+        ],
+      },
+      {
+        timestamp: "2025-01-15T10:00:15Z",
+        message: {
+          id: "m2",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "done" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    const toolCalls = mockStartObservation.mock.calls.filter(
+      (call) => call[2]?.asType === "tool",
+    );
+    expect(toolCalls).toHaveLength(2);
+
+    // First tool should have genStart as startTime
+    expect(toolCalls[0][2]).toEqual(
+      expect.objectContaining({
+        startTime: new Date("2025-01-15T10:00:05Z"),
+      }),
+    );
+
+    // Second tool should have first tool's endTime (tool_result timestamp) as startTime
+    expect(toolCalls[1][2]).toEqual(
+      expect.objectContaining({
+        startTime: new Date("2025-01-15T10:00:10Z"),
+      }),
     );
   });
 

@@ -47,6 +47,7 @@ function createToolObservations(
   toolCalls: ReturnType<typeof matchToolResults>,
   genStart: Date | undefined,
 ): void {
+  let nextStart = genStart;
   for (const toolCall of toolCalls) {
     const tool = startObservation(
       `Tool: ${toolCall.name}`,
@@ -59,10 +60,11 @@ function createToolObservations(
       },
       {
         asType: "tool",
-        ...childObservationOptions(parentObservation, genStart),
+        ...childObservationOptions(parentObservation, nextStart),
       },
     );
     tool.update({ output: toolCall.output }).end(toolCall.timestamp);
+    nextStart = toolCall.timestamp ?? nextStart;
     debug(`Created tool observation for: ${toolCall.name}`);
   }
 }
