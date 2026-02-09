@@ -1,5 +1,26 @@
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Message = Record<string, any>;
+interface UsageInfo {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
+export interface AssistantMessageBody {
+  id: string;
+  role: string;
+  model?: string;
+  content: ContentBlock[] | string;
+  usage?: UsageInfo;
+  timestamp?: string;
+}
+
+export interface Message {
+  type?: string;
+  sessionId?: string;
+  timestamp?: string;
+  isMeta?: boolean;
+  content?: ContentBlock[] | string;
+  message?: AssistantMessageBody;
+}
 
 export interface TextBlock {
   type: "text";

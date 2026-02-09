@@ -1,4 +1,5 @@
 import type {
+  ContentBlock,
   Message,
   ToolUseBlock,
   ToolResultBlock,
@@ -17,18 +18,18 @@ import {
 export function mergeAssistantParts(parts: Message[]): Message {
   if (parts.length === 0) return {};
 
-  const mergedContent: unknown[] = [];
+  const mergedContent: ContentBlock[] = [];
   for (const part of parts) {
     const content = getContent(part);
     if (Array.isArray(content)) {
-      mergedContent.push(...content);
+      mergedContent.push(...(content as ContentBlock[]));
     } else if (content !== undefined && content !== null) {
       mergedContent.push({ type: "text", text: String(content) });
     }
   }
 
   const result = { ...parts[0] };
-  if ("message" in result) {
+  if (result.message) {
     result.message = { ...result.message, content: mergedContent };
   } else {
     result.content = mergedContent;
@@ -80,8 +81,7 @@ class TurnBuilder {
         continue;
       }
 
-      const role =
-        msg.type ?? (msg.message as Message | undefined)?.role ?? undefined;
+      const role = msg.type ?? msg.message?.role;
 
       if (role === "user") {
         this.handleUser(msg, idx);
