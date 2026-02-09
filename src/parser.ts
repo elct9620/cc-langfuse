@@ -16,8 +16,6 @@ import {
 } from "./content.js";
 
 export function mergeAssistantParts(parts: Message[]): Message {
-  if (parts.length === 0) return {};
-
   const mergedContent: ContentBlock[] = [];
   for (const part of parts) {
     const content = getContent(part);
@@ -46,7 +44,6 @@ class AssistantPartAccumulator {
 
     if (!id || id === this.msgId) {
       this.parts.push(msg);
-      if (id) this.msgId = id;
       return undefined;
     }
 

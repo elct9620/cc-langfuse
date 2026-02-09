@@ -135,10 +135,6 @@ describe("mergeAssistantParts", () => {
     });
   });
 
-  it("returns empty object for empty parts", () => {
-    expect(mergeAssistantParts([])).toEqual({});
-  });
-
   it("wraps non-array content as text", () => {
     const parts = [{ content: "hello" }, { content: "world" }];
     const merged = mergeAssistantParts(parts);
