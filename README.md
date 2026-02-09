@@ -2,7 +2,7 @@
 
 A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) hook that sends session transcripts to [Langfuse](https://langfuse.com/) for observability.
 
-It runs as a Claude Code `Stop` hook — each time Claude Code finishes a response, cc-langfuse parses the `.jsonl` transcript and creates traces, generations, and tool spans in Langfuse.
+It runs as a Claude Code `Stop` hook — each time Claude Code finishes a response, cc-langfuse receives the session ID and transcript path via stdin, parses the `.jsonl` transcript, and creates traces, generations, and tool spans in Langfuse.
 
 ## Setup
 
@@ -47,22 +47,27 @@ Add the following to `.claude/settings.local.json` (not checked into version con
 
 `CC_LANGFUSE_*` prefixed variants take precedence over `LANGFUSE_*` variants, so you can use cc-langfuse alongside other Langfuse integrations without conflict.
 
+### Debugging
+
+Set `CC_LANGFUSE_DEBUG=true` to enable debug logging. Logs are written to `~/.claude/state/cc-langfuse_hook.log`.
+
 ## How It Works
 
 1. Claude Code triggers the `Stop` hook after each assistant response
-2. cc-langfuse locates the latest `.jsonl` transcript in `~/.claude/projects/`
+2. cc-langfuse receives `session_id` and `transcript_path` via stdin from Claude Code
 3. New messages since last run are parsed and grouped into turns
-4. Each turn is sent to Langfuse as a trace with generations and tool spans
+4. Each turn is sent to Langfuse as a trace with agent, generation, and tool spans
 5. State is persisted to `~/.claude/state/cc-langfuse_state.json` to avoid reprocessing
 
 ### Trace Structure
 
-| Level      | Name           | Content                       |
-| ---------- | -------------- | ----------------------------- |
-| Session    | Session ID     | Groups all turns in a session |
-| Trace      | `Turn N`       | One user-assistant exchange   |
-| Generation | Model name     | Assistant response content    |
-| Tool       | `Tool: {name}` | Tool input and output         |
+| Level      | Parent     | Name           | Content                       |
+| ---------- | ---------- | -------------- | ----------------------------- |
+| Session    |            | Session ID     | Groups all turns in a session |
+| Trace      | Session    | `Turn N`       | One user-assistant exchange   |
+| Agent      | Trace      | `Turn N`       | Agent span for the turn       |
+| Generation | Agent      | Model name     | Assistant response content    |
+| Tool       | Generation | `Tool: {name}` | Tool input and output         |
 
 ## Development
 
@@ -70,33 +75,22 @@ Requires [pnpm](https://pnpm.io/) and Node.js.
 
 ```bash
 pnpm install
-pnpm build        # Bundle with rolldown to dist/index.js
-pnpm test         # Run tests (vitest)
-pnpm typecheck    # Type-check with tsc
-pnpm format       # Format with prettier
+pnpm build          # Bundle with rolldown to dist/index.js
+pnpm test           # Run tests (vitest)
+pnpm typecheck      # Type-check with tsc
+pnpm format         # Format with prettier
+pnpm format:check   # Check formatting without writing
 ```
 
 ### Force Fetching Latest Version
 
-`pnpm dlx` caches downloaded packages. During development, if you need to ensure the hook always runs the latest published version, set `dlx-cache-max-age` to `0`:
+`pnpm dlx` caches downloaded packages. To force-fetch the latest version, run:
 
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "pnpm --config.dlx-cache-max-age=0 dlx github:elct9620/cc-langfuse"
-          }
-        ]
-      }
-    ]
-  }
-}
+```bash
+pnpm --config.dlx-cache-max-age=0 dlx github:elct9620/cc-langfuse
 ```
+
+This is intended for one-off manual updates, not for use inside hook configuration.
 
 ## License
 
