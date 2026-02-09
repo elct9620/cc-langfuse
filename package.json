@@ -10,6 +10,7 @@
     "build": "rolldown -c",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -19,14 +20,15 @@
   "packageManager": "pnpm@10.28.0",
   "devDependencies": {
     "@types/node": "^25.2.2",
+    "@vitest/coverage-v8": "^4.0.18",
     "prettier": "^3.8.1",
     "rolldown": "1.0.0-rc.3",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@langfuse/tracing": "^4.0.0",
     "@langfuse/otel": "^4.0.0",
+    "@langfuse/tracing": "^4.0.0",
     "@opentelemetry/sdk-node": "^0.202.0"
   }
 }
