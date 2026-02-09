@@ -24,6 +24,9 @@ const mockSpanContext = {
   traceFlags: 1,
 };
 
+// Mock for updateTrace on span observations
+const mockUpdateTrace = vi.fn();
+
 // Global startObservation mock — dispatches by asType
 const mockStartObservation = vi
   .fn()
@@ -36,31 +39,13 @@ const mockStartObservation = vi
         otelSpan: { spanContext: () => mockSpanContext },
       };
     }
-    // generation, agent, span all return the same shape
+    // generation, agent, span all return the same shape (with updateTrace)
     return {
       end: mockObservationEnd,
+      updateTrace: mockUpdateTrace,
       otelSpan: { spanContext: () => mockSpanContext },
     };
   });
-
-const mockSpanEnd = vi.fn();
-const mockStartActiveObservation = vi
-  .fn()
-  .mockImplementation(
-    async (
-      _name: string,
-      callback: (span: {
-        end: typeof mockSpanEnd;
-        otelSpan: { spanContext: () => typeof mockSpanContext };
-      }) => Promise<void>,
-    ) => {
-      await callback({
-        end: mockSpanEnd,
-        otelSpan: { spanContext: () => mockSpanContext },
-      });
-    },
-  );
-const mockUpdateActiveTrace = vi.fn();
 const mockPropagateAttributes = vi
   .fn()
   .mockImplementation(async (_attrs: object, callback: () => Promise<void>) => {
@@ -68,9 +53,7 @@ const mockPropagateAttributes = vi
   });
 
 vi.mock("@langfuse/tracing", () => ({
-  startActiveObservation: mockStartActiveObservation,
   startObservation: mockStartObservation,
-  updateActiveTrace: mockUpdateActiveTrace,
   propagateAttributes: mockPropagateAttributes,
 }));
 
@@ -235,11 +218,7 @@ describe("hook", () => {
 
     expect(NodeSDK).toHaveBeenCalled();
     expect(mockSdkStart).toHaveBeenCalled();
-    expect(mockStartActiveObservation).toHaveBeenCalledWith(
-      "Turn 1",
-      expect.any(Function),
-      {},
-    );
+    expect(mockStartObservation).toHaveBeenCalledWith("Turn 1", {}, undefined);
     expect(mockStartObservation).toHaveBeenCalledWith(
       "claude-sonnet-4-5-20250929",
       expect.objectContaining({ model: "claude-sonnet-4-5-20250929" }),
@@ -276,7 +255,11 @@ describe("processTranscript", () => {
     const result = await processTranscript("sess1", filePath, state);
 
     expect(result.turns).toBe(2);
-    expect(mockStartActiveObservation).toHaveBeenCalledTimes(2);
+    // 2 turns × (1 outer span + 1 agent + 1 generation) = 6 calls
+    const spanCalls = mockStartObservation.mock.calls.filter(
+      (call) => !call[2]?.asType,
+    );
+    expect(spanCalls).toHaveLength(2);
   });
 
   it("creates tool observations for tool calls", async () => {
@@ -362,8 +345,8 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    // 1 root span (agent) + 2 generations + 1 tool = 4 calls
-    expect(mockStartObservation).toHaveBeenCalledTimes(4);
+    // 1 outer span + 1 root span (agent) + 2 generations + 1 tool = 5 calls
+    expect(mockStartObservation).toHaveBeenCalledTimes(5);
 
     // Filter generation calls
     const generationCalls = mockStartObservation.mock.calls.filter(
@@ -406,11 +389,7 @@ describe("processTranscript", () => {
     const result = await processTranscript("sess1", filePath, state);
 
     expect(result.turns).toBe(1);
-    expect(mockStartActiveObservation).toHaveBeenCalledWith(
-      "Turn 2",
-      expect.any(Function),
-      {},
-    );
+    expect(mockStartObservation).toHaveBeenCalledWith("Turn 2", {}, undefined);
   });
 
   it("does not advance last_line past incomplete turns", async () => {
@@ -500,7 +479,7 @@ describe("processTranscript", () => {
     expect(result.updatedState.sess1.turn_count).toBe(1);
   });
 
-  it("should pass startTime to startActiveObservation for trace", async () => {
+  it("should pass startTime to startObservation for outer span", async () => {
     const filePath = setupTranscript([
       {
         sessionId: "sess1",
@@ -522,12 +501,11 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    expect(mockStartActiveObservation).toHaveBeenCalledWith(
+    expect(mockStartObservation).toHaveBeenCalledWith(
       "Turn 1",
-      expect.any(Function),
+      {},
       {
         startTime: new Date("2025-01-15T10:00:00Z"),
-        endOnExit: false,
       },
     );
   });
@@ -786,12 +764,8 @@ describe("processTranscript", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    // No startTime in options (empty object)
-    expect(mockStartActiveObservation).toHaveBeenCalledWith(
-      "Turn 1",
-      expect.any(Function),
-      {},
-    );
+    // No startTime in options (undefined)
+    expect(mockStartObservation).toHaveBeenCalledWith("Turn 1", {}, undefined);
 
     // No startTime in generation options
     const generationCall = mockStartObservation.mock.calls.find(
@@ -944,12 +918,12 @@ describe("orphan session recovery", () => {
     await hook();
 
     // Should have processed both sessions (2 turns total: 1 prev + 1 current)
-    expect(mockStartActiveObservation).toHaveBeenCalledTimes(2);
-    expect(mockStartActiveObservation).toHaveBeenCalledWith(
-      "Turn 1",
-      expect.any(Function),
-      {},
+    // Each turn creates: 1 outer span + 1 agent + 1 generation = 3 calls
+    const spanCalls = mockStartObservation.mock.calls.filter(
+      (call) => !call[2]?.asType,
     );
+    expect(spanCalls).toHaveLength(2);
+    expect(mockStartObservation).toHaveBeenCalledWith("Turn 1", {}, undefined);
   });
 
   it("continues processing current session when previous session recovery fails", async () => {
@@ -985,11 +959,7 @@ describe("orphan session recovery", () => {
     await hook();
 
     // Current session should still be processed (1 turn)
-    expect(mockStartActiveObservation).toHaveBeenCalledWith(
-      "Turn 1",
-      expect.any(Function),
-      {},
-    );
+    expect(mockStartObservation).toHaveBeenCalledWith("Turn 1", {}, undefined);
     expect(mockSdkShutdown).toHaveBeenCalled();
   });
 });
@@ -1042,7 +1012,8 @@ describe("processTranscriptWithRecovery", () => {
     // Prev session has no complete turns (user only, no assistant)
     // Current session picks up orphaned prev user + assistant as 1 turn
     expect(result.turns).toBe(1);
-    expect(mockStartActiveObservation).toHaveBeenCalledTimes(1);
+    // 1 turn × (1 outer span + 1 agent + 1 generation) = 3 calls
+    expect(mockStartObservation).toHaveBeenCalledTimes(3);
     expect(mockPropagateAttributes).toHaveBeenCalledWith(
       { sessionId: "current-session" },
       expect.any(Function),
@@ -1233,8 +1204,8 @@ describe("processTranscriptWithRecovery", () => {
   });
 });
 
-describe("updateActiveTrace name", () => {
-  it("includes name in updateActiveTrace call", async () => {
+describe("updateTrace name", () => {
+  it("includes name in updateTrace call", async () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },
       {
@@ -1250,7 +1221,7 @@ describe("updateActiveTrace name", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    expect(mockUpdateActiveTrace).toHaveBeenCalledWith(
+    expect(mockUpdateTrace).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Turn 1" }),
     );
   });
@@ -1280,11 +1251,11 @@ describe("updateActiveTrace name", () => {
     const state = {};
     await processTranscript("sess1", filePath, state);
 
-    expect(mockUpdateActiveTrace).toHaveBeenCalledTimes(2);
-    expect(mockUpdateActiveTrace).toHaveBeenCalledWith(
+    expect(mockUpdateTrace).toHaveBeenCalledTimes(2);
+    expect(mockUpdateTrace).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Turn 1" }),
     );
-    expect(mockUpdateActiveTrace).toHaveBeenCalledWith(
+    expect(mockUpdateTrace).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Turn 2" }),
     );
   });

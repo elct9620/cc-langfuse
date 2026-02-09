@@ -56,7 +56,7 @@ export async function processTranscript(
 
   await propagateAttributes({ sessionId }, async () => {
     for (let i = 0; i < turns.length; i++) {
-      await createTrace(sessionId, turnCount + i + 1, turns[i]);
+      createTrace(sessionId, turnCount + i + 1, turns[i]);
     }
   });
 

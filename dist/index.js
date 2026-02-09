@@ -3,15 +3,19 @@ import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { propagateAttributes, startActiveObservation, startObservation, updateActiveTrace } from "@langfuse/tracing";
+import { propagateAttributes, startObservation } from "@langfuse/tracing";
 
 //#region src/logger.ts
 const STATE_FILE = join(homedir(), ".claude", "state", "cc-langfuse_state.json");
 const LOG_FILE = join(homedir(), ".claude", "state", "cc-langfuse_hook.log");
 const DEBUG = (process.env.CC_LANGFUSE_DEBUG ?? "").toLowerCase() === "true";
 const HOOK_WARNING_THRESHOLD_SECONDS = 180;
+let logDirReady = false;
 function log(level, message) {
-	mkdirSync(dirname(LOG_FILE), { recursive: true });
+	if (!logDirReady) {
+		mkdirSync(dirname(LOG_FILE), { recursive: true });
+		logDirReady = true;
+	}
 	appendFileSync(LOG_FILE, `${(/* @__PURE__ */ new Date()).toISOString().replace("T", " ").slice(0, 19)} [${level}] ${message}\n`);
 }
 function debug(message) {
@@ -60,7 +64,18 @@ function findPreviousSession(transcriptPath, currentSessionId) {
 	}
 }
 function parseNewMessages(transcriptFile, lastLine) {
-	const lines = readFileSync(transcriptFile, "utf8").trim().split("\n");
+	const raw = readFileSync(transcriptFile, "utf8").trim();
+	if (!raw) return null;
+	if (lastLine > 0) {
+		let newlineCount = 0;
+		for (let i = 0; i < raw.length; i++) if (raw.charCodeAt(i) === 10) newlineCount++;
+		const totalLines = newlineCount + 1;
+		if (lastLine >= totalLines) {
+			debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
+			return null;
+		}
+	}
+	const lines = raw.split("\n");
 	const totalLines = lines.length;
 	if (lastLine >= totalLines) {
 		debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
@@ -102,8 +117,9 @@ function getTimestamp(msg) {
 function getContent(msg) {
 	if (msg === null || typeof msg !== "object") return void 0;
 	const record = msg;
-	if ("message" in record && typeof record.message === "object") return record.message?.content;
-	return record.content;
+	const raw = "message" in record && typeof record.message === "object" ? record.message?.content : record.content;
+	if (Array.isArray(raw)) return raw;
+	if (typeof raw === "string") return raw;
 }
 function isToolResult(msg) {
 	const content = getContent(msg);
@@ -127,10 +143,12 @@ function getTextContent(msg) {
 function getUsage(msg) {
 	const usage = msg.message?.usage;
 	if (!usage) return void 0;
+	const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : void 0;
+	const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : void 0;
 	const details = {};
-	if (typeof usage.input_tokens === "number") details.input = usage.input_tokens;
-	if (typeof usage.output_tokens === "number") details.output = usage.output_tokens;
-	if (typeof usage.input_tokens === "number" && typeof usage.output_tokens === "number") details.total = usage.input_tokens + usage.output_tokens;
+	if (inputTokens !== void 0) details.input = inputTokens;
+	if (outputTokens !== void 0) details.output = outputTokens;
+	if (inputTokens !== void 0 && outputTokens !== void 0) details.total = inputTokens + outputTokens;
 	if (typeof usage.cache_read_input_tokens === "number") details.cache_read_input_tokens = usage.cache_read_input_tokens;
 	return Object.keys(details).length > 0 ? details : void 0;
 }
@@ -339,49 +357,44 @@ function createGenerations(parentObservation, turn, model, userText) {
 		});
 	}
 }
-async function createTrace(sessionId, turnNum, turn) {
+function createTrace(sessionId, turnNum, turn) {
 	const { userText, lastAssistantText, model, traceStart, traceEnd } = computeTraceContext(turn);
-	const hasTraceStart = traceStart !== void 0;
-	await startActiveObservation(`Turn ${turnNum}`, async (span) => {
-		updateActiveTrace({
-			name: `Turn ${turnNum}`,
-			sessionId,
-			input: {
-				role: "user",
-				content: userText
-			},
-			output: {
-				role: "assistant",
-				content: lastAssistantText
-			},
-			metadata: {
-				source: "claude-code",
-				turn_number: turnNum,
-				session_id: sessionId
-			}
-		});
-		const rootSpan = startObservation(`Turn ${turnNum}`, {
-			input: {
-				role: "user",
-				content: userText
-			},
-			output: {
-				role: "assistant",
-				content: lastAssistantText
-			}
-		}, {
-			asType: "agent",
-			...childObservationOptions(span, hasTraceStart ? traceStart : void 0)
-		});
-		createGenerations(rootSpan, turn, model, userText);
-		if (traceEnd) {
-			rootSpan.end(traceEnd);
-			span.end(traceEnd);
+	const span = startObservation(`Turn ${turnNum}`, {}, traceStart ? { startTime: traceStart } : void 0);
+	span.updateTrace({
+		name: `Turn ${turnNum}`,
+		sessionId,
+		input: {
+			role: "user",
+			content: userText
+		},
+		output: {
+			role: "assistant",
+			content: lastAssistantText
+		},
+		metadata: {
+			source: "claude-code",
+			turn_number: turnNum,
+			session_id: sessionId
 		}
-	}, { ...hasTraceStart && {
-		startTime: traceStart,
-		endOnExit: false
-	} });
+	});
+	const rootSpan = startObservation(`Turn ${turnNum}`, {
+		input: {
+			role: "user",
+			content: userText
+		},
+		output: {
+			role: "assistant",
+			content: lastAssistantText
+		}
+	}, {
+		asType: "agent",
+		...childObservationOptions(span, traceStart)
+	});
+	createGenerations(rootSpan, turn, model, userText);
+	if (traceEnd) {
+		rootSpan.end(traceEnd);
+		span.end(traceEnd);
+	}
 	debug(`Created trace for turn ${turnNum}`);
 }
 
@@ -418,7 +431,7 @@ async function processTranscript(sessionId, transcriptFile, state) {
 		updatedState: state
 	};
 	await propagateAttributes({ sessionId }, async () => {
-		for (let i = 0; i < turns.length; i++) await createTrace(sessionId, turnCount + i + 1, turns[i]);
+		for (let i = 0; i < turns.length; i++) createTrace(sessionId, turnCount + i + 1, turns[i]);
 	});
 	const updatedState = computeUpdatedState({
 		state,

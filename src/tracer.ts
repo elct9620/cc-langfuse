@@ -1,8 +1,4 @@
-import {
-  startActiveObservation,
-  startObservation,
-  updateActiveTrace,
-} from "@langfuse/tracing";
+import { startObservation } from "@langfuse/tracing";
 import type { LangfuseObservation } from "@langfuse/tracing";
 import { debug } from "./logger.js";
 import {
@@ -141,58 +137,57 @@ function createGenerations(
   }
 }
 
-export async function createTrace(
+export function createTrace(
   sessionId: string,
   turnNum: number,
   turn: Turn,
-): Promise<void> {
+): void {
   const { userText, lastAssistantText, model, traceStart, traceEnd } =
     computeTraceContext(turn);
-  const hasTraceStart = traceStart !== undefined;
 
-  await startActiveObservation(
+  // Use startObservation (not startActiveObservation) to avoid depending on
+  // OTel active span context, which breaks in cross-session recovery.
+  const span = startObservation(
     `Turn ${turnNum}`,
-    async (span) => {
-      updateActiveTrace({
-        name: `Turn ${turnNum}`,
-        sessionId,
-        input: { role: "user", content: userText },
-        output: { role: "assistant", content: lastAssistantText },
-        metadata: {
-          source: "claude-code",
-          turn_number: turnNum,
-          session_id: sessionId,
-        },
-      });
+    {},
+    traceStart ? { startTime: traceStart } : undefined,
+  );
 
-      // Use global startObservation() to work around SDK bug where
-      // instance method drops startTime from options
-      const rootSpan = startObservation(
-        `Turn ${turnNum}`,
-        {
-          input: { role: "user", content: userText },
-          output: { role: "assistant", content: lastAssistantText },
-        },
-        {
-          asType: "agent",
-          ...childObservationOptions(
-            span,
-            hasTraceStart ? traceStart : undefined,
-          ),
-        },
-      );
+  // Set trace-level attributes via the observation's updateTrace method.
+  // This replaces updateActiveTrace() which silently skips when getActiveSpan() is null.
+  span.updateTrace({
+    name: `Turn ${turnNum}`,
+    sessionId,
+    input: { role: "user", content: userText },
+    output: { role: "assistant", content: lastAssistantText },
+    metadata: {
+      source: "claude-code",
+      turn_number: turnNum,
+      session_id: sessionId,
+    },
+  });
 
-      createGenerations(rootSpan, turn, model, userText);
-
-      if (traceEnd) {
-        rootSpan.end(traceEnd);
-        span.end(traceEnd);
-      }
+  // Use global startObservation() with explicit parentSpanContext.
+  // Cannot use span.startObservation() instance method because it drops
+  // startTime from options (SDK bug, see commit 167cde4).
+  const rootSpan = startObservation(
+    `Turn ${turnNum}`,
+    {
+      input: { role: "user", content: userText },
+      output: { role: "assistant", content: lastAssistantText },
     },
     {
-      ...(hasTraceStart && { startTime: traceStart, endOnExit: false }),
+      asType: "agent",
+      ...childObservationOptions(span, traceStart),
     },
   );
+
+  createGenerations(rootSpan, turn, model, userText);
+
+  if (traceEnd) {
+    rootSpan.end(traceEnd);
+    span.end(traceEnd);
+  }
 
   debug(`Created trace for turn ${turnNum}`);
 }
