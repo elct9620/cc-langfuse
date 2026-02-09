@@ -66,24 +66,14 @@ function findPreviousSession(transcriptPath, currentSessionId) {
 function parseNewMessages(transcriptFile, lastLine) {
 	const raw = readFileSync(transcriptFile, "utf8").trim();
 	if (!raw) return null;
-	if (lastLine > 0) {
-		let newlineCount = 0;
-		for (let i = 0; i < raw.length; i++) if (raw.charCodeAt(i) === 10) newlineCount++;
-		const totalLines = newlineCount + 1;
-		if (lastLine >= totalLines) {
-			debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
-			return null;
-		}
-	}
 	const lines = raw.split("\n");
-	const totalLines = lines.length;
-	if (lastLine >= totalLines) {
-		debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
+	if (lastLine >= lines.length) {
+		debug(`No new lines to process (last: ${lastLine}, total: ${lines.length})`);
 		return null;
 	}
 	const messages = [];
 	const lineOffsets = [];
-	for (let i = lastLine; i < totalLines; i++) try {
+	for (let i = lastLine; i < lines.length; i++) try {
 		messages.push(JSON.parse(lines[i]));
 		lineOffsets.push(i + 1);
 	} catch (e) {
@@ -167,7 +157,7 @@ function mergeAssistantParts(parts) {
 		});
 	}
 	const result = { ...parts[0] };
-	if ("message" in result) result.message = {
+	if (result.message) result.message = {
 		...result.message,
 		content: mergedContent
 	};
@@ -211,7 +201,7 @@ var TurnBuilder = class {
 				idx++;
 				continue;
 			}
-			const role = msg.type ?? msg.message?.role ?? void 0;
+			const role = msg.type ?? msg.message?.role;
 			if (role === "user") this.handleUser(msg, idx);
 			else if (role === "assistant") this.handleAssistant(msg);
 			idx++;
