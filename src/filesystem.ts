@@ -71,37 +71,21 @@ export function parseNewMessages(
   const raw = readFileSync(transcriptFile, "utf8").trim();
   if (!raw) return null;
 
-  // Quick line-count check to avoid splitting when there are no new lines
-  if (lastLine > 0) {
-    let newlineCount = 0;
-    for (let i = 0; i < raw.length; i++) {
-      if (raw.charCodeAt(i) === 10) newlineCount++;
-    }
-    const totalLines = newlineCount + 1;
-    if (lastLine >= totalLines) {
-      debug(
-        `No new lines to process (last: ${lastLine}, total: ${totalLines})`,
-      );
-      return null;
-    }
-  }
-
   const lines = raw.split("\n");
-  const totalLines = lines.length;
-
-  if (lastLine >= totalLines) {
-    debug(`No new lines to process (last: ${lastLine}, total: ${totalLines})`);
+  if (lastLine >= lines.length) {
+    debug(
+      `No new lines to process (last: ${lastLine}, total: ${lines.length})`,
+    );
     return null;
   }
 
   const messages: Message[] = [];
   const lineOffsets: number[] = [];
-  for (let i = lastLine; i < totalLines; i++) {
+  for (let i = lastLine; i < lines.length; i++) {
     try {
       messages.push(JSON.parse(lines[i]));
       lineOffsets.push(i + 1);
     } catch (e) {
-      // Malformed JSON lines are expected in incomplete transcripts
       debug(`Skipping line ${i}: ${e}`);
       continue;
     }
