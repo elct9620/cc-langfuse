@@ -86,6 +86,8 @@ export function getUsage(msg: Message): Record<string, number> | undefined {
     details.total = inputTokens + outputTokens;
   if (typeof usage.cache_read_input_tokens === "number")
     details.cache_read_input_tokens = usage.cache_read_input_tokens;
+  if (typeof usage.cache_creation_input_tokens === "number")
+    details.cache_creation_input_tokens = usage.cache_creation_input_tokens;
 
   return Object.keys(details).length > 0 ? details : undefined;
 }

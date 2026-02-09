@@ -136,6 +136,7 @@ function getUsage(msg) {
 	if (outputTokens !== void 0) details.output = outputTokens;
 	if (inputTokens !== void 0 && outputTokens !== void 0) details.total = inputTokens + outputTokens;
 	if (typeof usage.cache_read_input_tokens === "number") details.cache_read_input_tokens = usage.cache_read_input_tokens;
+	if (typeof usage.cache_creation_input_tokens === "number") details.cache_creation_input_tokens = usage.cache_creation_input_tokens;
 	return Object.keys(details).length > 0 ? details : void 0;
 }
 
@@ -152,11 +153,14 @@ function mergeAssistantParts(parts) {
 		});
 	}
 	const result = { ...parts[0] };
-	if (result.message) result.message = {
-		...result.message,
-		content: mergedContent
-	};
-	else result.content = mergedContent;
+	if (result.message) {
+		result.message = {
+			...result.message,
+			content: mergedContent
+		};
+		const lastPart = parts[parts.length - 1];
+		if (lastPart.message?.usage) result.message.usage = lastPart.message.usage;
+	} else result.content = mergedContent;
 	return result;
 }
 var AssistantPartAccumulator = class {

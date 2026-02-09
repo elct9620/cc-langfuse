@@ -5,6 +5,7 @@ import {
   isToolResult,
   getToolCalls,
   getTextContent,
+  getUsage,
 } from "../src/content.js";
 import {
   mergeAssistantParts,
@@ -127,6 +128,32 @@ describe("mergeAssistantParts", () => {
       id: "t1",
       name: "Read",
       input: {},
+    });
+  });
+
+  it("uses usage from the last part", () => {
+    const parts: Message[] = [
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "text", text: "part1" }],
+          usage: { input_tokens: 100, output_tokens: 10 },
+        },
+      },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "text", text: "part2" }],
+          usage: { input_tokens: 100, output_tokens: 50 },
+        },
+      },
+    ];
+    const merged = mergeAssistantParts(parts);
+    expect(merged.message?.usage).toEqual({
+      input_tokens: 100,
+      output_tokens: 50,
     });
   });
 
@@ -353,6 +380,49 @@ describe("getTimestamp", () => {
   it("should return undefined for non-string timestamp", () => {
     const msg = { timestamp: 12345 };
     expect(getTimestamp(msg)).toBeUndefined();
+  });
+});
+
+describe("getUsage", () => {
+  it("extracts cache_creation_input_tokens", () => {
+    const msg: Message = {
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: "hello",
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_read_input_tokens: 80,
+          cache_creation_input_tokens: 20,
+        },
+      },
+    };
+    const usage = getUsage(msg);
+    expect(usage).toEqual({
+      input: 100,
+      output: 50,
+      total: 150,
+      cache_read_input_tokens: 80,
+      cache_creation_input_tokens: 20,
+    });
+  });
+
+  it("omits cache_creation_input_tokens when not present", () => {
+    const msg: Message = {
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: "hello",
+        usage: { input_tokens: 100, output_tokens: 50 },
+      },
+    };
+    const usage = getUsage(msg);
+    expect(usage).toEqual({
+      input: 100,
+      output: 50,
+      total: 150,
+    });
   });
 });
 

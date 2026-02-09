@@ -29,6 +29,10 @@ export function mergeAssistantParts(parts: Message[]): Message {
   const result = { ...parts[0] };
   if (result.message) {
     result.message = { ...result.message, content: mergedContent };
+    const lastPart = parts[parts.length - 1];
+    if (lastPart.message?.usage) {
+      result.message.usage = lastPart.message.usage;
+    }
   } else {
     result.content = mergedContent;
   }
