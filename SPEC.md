@@ -94,10 +94,10 @@ Session (Session ID)
 └── Trace: "Turn N"
     └── Root Span: "Turn N"            (asType: "agent")
         ├── Generation: "{model}"      (asType: "generation")
-        │   └── Tool: "Tool: {name}"   (asType: "tool")
+        │   └── Tool: "{name}"          (asType: "tool")
         ├── Generation: "{model}"      (asType: "generation")
-        │   ├── Tool: "Tool: {name}"   (asType: "tool")
-        │   └── Tool: "Tool: {name}"   (asType: "tool")
+        │   ├── Tool: "{name}"         (asType: "tool")
+        │   └── Tool: "{name}"         (asType: "tool")
         └── Generation: "{model}"      (asType: "generation")
 ```
 
@@ -114,7 +114,7 @@ Each level carries the following data:
 - **Trace** — One Turn (a user → assistant exchange), named `Turn N`. `output` is the final response the user sees.
 - **Root Span** (`asType: "agent"`) — The root observation of each turn, typed as `"agent"` to represent a Claude Code agent interaction. Carries the same `input`/`output` as its parent Trace.
 - **Generation** (`asType: "generation"`) — One model invocation, named after the model. A single Turn may contain multiple Generations when the model calls tools and responds again. Only the first Generation carries `input` (the user's message). Subsequent Generations omit `input`; their context (tool results) is already captured in the preceding Generation's Tool observations.
-- **Tool** (`asType: "tool"`) — One tool execution, named `Tool: {name}`; parented under the Generation that initiated the tool call
+- **Tool** (`asType: "tool"`) — One tool execution, named `{name}` (the tool name directly); parented under the Generation that initiated the tool call
 
 #### Usage and Cost
 
