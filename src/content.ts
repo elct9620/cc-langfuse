@@ -17,21 +17,16 @@ function isBlockOfType<T extends ContentBlock>(
   );
 }
 
-export function isTextBlock(item: unknown): item is TextBlock {
+function isTextBlock(item: unknown): item is TextBlock {
   return isBlockOfType<TextBlock>(item, "text");
 }
 
-export function isToolUseBlock(item: unknown): item is ToolUseBlock {
+function isToolUseBlock(item: unknown): item is ToolUseBlock {
   return isBlockOfType<ToolUseBlock>(item, "tool_use");
 }
 
 export function isToolResultBlock(item: unknown): item is ToolResultBlock {
   return isBlockOfType<ToolResultBlock>(item, "tool_result");
-}
-
-export function getSessionId(msg: Message): string | undefined {
-  const sid = msg.sessionId;
-  return typeof sid === "string" ? sid : undefined;
 }
 
 export function getTimestamp(msg: Message): Date | undefined {
@@ -40,14 +35,12 @@ export function getTimestamp(msg: Message): Date | undefined {
   return undefined;
 }
 
-export function getContent(msg: unknown): unknown[] | string | undefined {
-  if (msg === null || typeof msg !== "object") return undefined;
-  const record = msg as Message;
+export function getContent(msg: Message): ContentBlock[] | string | undefined {
   const raw =
-    "message" in record && typeof record.message === "object"
-      ? record.message?.content
-      : record.content;
-  if (Array.isArray(raw)) return raw as unknown[];
+    msg.message && typeof msg.message === "object"
+      ? msg.message.content
+      : msg.content;
+  if (Array.isArray(raw)) return raw;
   if (typeof raw === "string") return raw;
   return undefined;
 }

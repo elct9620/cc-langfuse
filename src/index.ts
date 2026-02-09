@@ -1,6 +1,8 @@
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { log, debug, HOOK_WARNING_THRESHOLD_SECONDS } from "./logger.js";
+import { log, debug } from "./logger.js";
+
+const HOOK_WARNING_THRESHOLD_SECONDS = 180;
 import { loadState, saveState, findPreviousSession } from "./filesystem.js";
 import type { State } from "./filesystem.js";
 import {
@@ -111,7 +113,7 @@ export async function hook(): Promise<void> {
 
   try {
     const previous = findPreviousSession(filePath, sessionId);
-    let result: { turns: number; updatedState: State };
+    let result: { turns: number; updatedState: State } | undefined;
 
     if (previous) {
       debug(`Recovering previous session: ${previous.sessionId}`);
@@ -126,11 +128,10 @@ export async function hook(): Promise<void> {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         log("ERROR", `Failed to recover previous session: ${msg}`);
-        result = await processTranscript(sessionId, filePath, state);
       }
-    } else {
-      result = await processTranscript(sessionId, filePath, state);
     }
+
+    result ??= await processTranscript(sessionId, filePath, state);
 
     const { turns, updatedState } = result;
     saveState(updatedState);

@@ -22,7 +22,7 @@ export function mergeAssistantParts(parts: Message[]): Message {
   for (const part of parts) {
     const content = getContent(part);
     if (Array.isArray(content)) {
-      mergedContent.push(...(content as ContentBlock[]));
+      mergedContent.push(...content);
     } else if (content !== undefined && content !== null) {
       mergedContent.push({ type: "text", text: String(content) });
     }

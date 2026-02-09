@@ -2,12 +2,6 @@ import { mkdirSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 
-export const STATE_FILE = join(
-  homedir(),
-  ".claude",
-  "state",
-  "cc-langfuse_state.json",
-);
 export const LOG_FILE = join(
   homedir(),
   ".claude",
@@ -16,8 +10,6 @@ export const LOG_FILE = join(
 );
 export const DEBUG =
   (process.env.CC_LANGFUSE_DEBUG ?? "").toLowerCase() === "true";
-export const HOOK_WARNING_THRESHOLD_SECONDS = 180;
-
 let logDirReady = false;
 
 export type LogLevel = "INFO" | "ERROR" | "WARN" | "DEBUG";

@@ -11,22 +11,19 @@ import {
   groupTurns,
   matchToolResults,
 } from "../src/parser.js";
-import type { ToolUseBlock } from "../src/types.js";
+import type { Message, ToolUseBlock } from "../src/types.js";
 
 describe("getContent", () => {
   it("extracts content from a message with nested message field", () => {
-    const msg = { message: { content: "hello" } };
+    const msg: Message = {
+      message: { id: "m1", role: "assistant", content: "hello" },
+    };
     expect(getContent(msg)).toBe("hello");
   });
 
   it("extracts content from a flat message", () => {
-    const msg = { content: "hello" };
+    const msg: Message = { content: "hello" };
     expect(getContent(msg)).toBe("hello");
-  });
-
-  it("returns undefined for non-object input", () => {
-    expect(getContent(null)).toBeUndefined();
-    expect(getContent("string")).toBeUndefined();
   });
 
   it("returns undefined for empty object", () => {

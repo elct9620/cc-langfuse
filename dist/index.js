@@ -6,10 +6,8 @@ import { dirname, join } from "node:path";
 import { propagateAttributes, startObservation } from "@langfuse/tracing";
 
 //#region src/logger.ts
-const STATE_FILE = join(homedir(), ".claude", "state", "cc-langfuse_state.json");
 const LOG_FILE = join(homedir(), ".claude", "state", "cc-langfuse_hook.log");
 const DEBUG = (process.env.CC_LANGFUSE_DEBUG ?? "").toLowerCase() === "true";
-const HOOK_WARNING_THRESHOLD_SECONDS = 180;
 let logDirReady = false;
 function log(level, message) {
 	if (!logDirReady) {
@@ -24,6 +22,7 @@ function debug(message) {
 
 //#endregion
 //#region src/filesystem.ts
+const STATE_FILE = join(homedir(), ".claude", "state", "cc-langfuse_state.json");
 /**
 * Loads persisted session state from disk.
 *
@@ -105,9 +104,7 @@ function getTimestamp(msg) {
 	if (typeof ts === "string") return new Date(ts);
 }
 function getContent(msg) {
-	if (msg === null || typeof msg !== "object") return void 0;
-	const record = msg;
-	const raw = "message" in record && typeof record.message === "object" ? record.message?.content : record.content;
+	const raw = msg.message && typeof msg.message === "object" ? msg.message.content : msg.content;
 	if (Array.isArray(raw)) return raw;
 	if (typeof raw === "string") return raw;
 }
@@ -446,6 +443,7 @@ async function processTranscriptWithRecovery(currentSessionId, currentFile, prev
 
 //#endregion
 //#region src/index.ts
+const HOOK_WARNING_THRESHOLD_SECONDS = 180;
 async function readHookInput() {
 	const chunks = [];
 	for await (const chunk of process.stdin) chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
@@ -518,9 +516,9 @@ async function hook() {
 				result = await processTranscriptWithRecovery(sessionId, filePath, previous.sessionId, previous.transcriptPath, state);
 			} catch (e) {
 				log("ERROR", `Failed to recover previous session: ${e instanceof Error ? e.message : String(e)}`);
-				result = await processTranscript(sessionId, filePath, state);
 			}
-		} else result = await processTranscript(sessionId, filePath, state);
+		}
+		result ??= await processTranscript(sessionId, filePath, state);
 		const { turns, updatedState } = result;
 		saveState(updatedState);
 		const duration = (Date.now() - scriptStart) / 1e3;

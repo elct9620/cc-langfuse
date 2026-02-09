@@ -32,7 +32,7 @@ cc-langfuse is a Node.js CLI hook tool for Claude Code that parses `.jsonl` tran
 | `src/parser.ts`     | Turn grouping (TurnBuilder), assistant part merging, tool result matching; re-exports types + content helpers for backward compat |
 | `src/tracer.ts`     | Langfuse trace/generation/tool observation creation from parsed turns                                                             |
 | `src/filesystem.ts` | State persistence (load/save), transcript file discovery, transcript reading + state computation                                  |
-| `src/logger.ts`     | Constants (STATE_FILE, LOG_FILE, DEBUG, HOOK_WARNING_THRESHOLD_SECONDS) + file logging                                            |
+| `src/logger.ts`     | Constants (LOG_FILE, DEBUG) + file logging                                                                                        |
 | `src/index.ts`      | Main `hook()` entry point, orchestrates all modules                                                                               |
 
 ### Module Dependencies

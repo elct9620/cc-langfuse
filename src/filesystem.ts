@@ -1,7 +1,15 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { STATE_FILE, debug } from "./logger.js";
+import { debug } from "./logger.js";
 import type { Message } from "./types.js";
+
+const STATE_FILE = join(
+  homedir(),
+  ".claude",
+  "state",
+  "cc-langfuse_state.json",
+);
 
 export interface SessionState {
   last_line: number;

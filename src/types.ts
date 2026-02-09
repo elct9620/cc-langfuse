@@ -4,7 +4,7 @@ interface UsageInfo {
   cache_read_input_tokens?: number;
 }
 
-export interface AssistantMessageBody {
+interface AssistantMessageBody {
   id: string;
   role: string;
   model?: string;
