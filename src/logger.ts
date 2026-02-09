@@ -18,8 +18,13 @@ export const DEBUG =
   (process.env.CC_LANGFUSE_DEBUG ?? "").toLowerCase() === "true";
 export const HOOK_WARNING_THRESHOLD_SECONDS = 180;
 
+let logDirReady = false;
+
 export function log(level: string, message: string): void {
-  mkdirSync(dirname(LOG_FILE), { recursive: true });
+  if (!logDirReady) {
+    mkdirSync(dirname(LOG_FILE), { recursive: true });
+    logDirReady = true;
+  }
   const timestamp = new Date().toISOString().replace("T", " ").slice(0, 19);
   appendFileSync(LOG_FILE, `${timestamp} [${level}] ${message}\n`);
 }

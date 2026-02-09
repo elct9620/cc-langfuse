@@ -68,7 +68,25 @@ export function parseNewMessages(
   transcriptFile: string,
   lastLine: number,
 ): { messages: Message[]; lineOffsets: number[] } | null {
-  const lines = readFileSync(transcriptFile, "utf8").trim().split("\n");
+  const raw = readFileSync(transcriptFile, "utf8").trim();
+  if (!raw) return null;
+
+  // Quick line-count check to avoid splitting when there are no new lines
+  if (lastLine > 0) {
+    let newlineCount = 0;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw.charCodeAt(i) === 10) newlineCount++;
+    }
+    const totalLines = newlineCount + 1;
+    if (lastLine >= totalLines) {
+      debug(
+        `No new lines to process (last: ${lastLine}, total: ${totalLines})`,
+      );
+      return null;
+    }
+  }
+
+  const lines = raw.split("\n");
   const totalLines = lines.length;
 
   if (lastLine >= totalLines) {

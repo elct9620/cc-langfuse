@@ -104,8 +104,16 @@ const LANGFUSE_ENV_KEYS = [
   "LANGFUSE_BASE_URL",
 ] as const;
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
+});
+
 afterEach(() => {
   vi.unstubAllEnvs();
+  if (existsSync(testDir)) {
+    rmSync(testDir, { recursive: true, force: true });
+  }
 });
 
 // Import after mocks
@@ -132,16 +140,8 @@ function mockStdin(data: object): void {
 
 describe("hook", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     for (const key of LANGFUSE_ENV_KEYS) {
       vi.stubEnv(key, "");
-    }
-    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
-  });
-
-  afterEach(() => {
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
     }
   });
 
@@ -251,17 +251,6 @@ describe("hook", () => {
 });
 
 describe("processTranscript", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
-  });
-
-  afterEach(() => {
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
-    }
-  });
-
   it("creates traces for each turn", async () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },
@@ -825,16 +814,6 @@ function setupTranscriptAt(fileName: string, lines: object[]): string {
 }
 
 describe("findPreviousSession", () => {
-  beforeEach(() => {
-    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
-  });
-
-  afterEach(() => {
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
-    }
-  });
-
   it("returns previous session when first line has different sessionId", () => {
     // Create previous session transcript
     setupTranscriptAt("prev-session.jsonl", [
@@ -920,16 +899,8 @@ describe("findPreviousSession", () => {
 
 describe("orphan session recovery", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     for (const key of LANGFUSE_ENV_KEYS) {
       vi.stubEnv(key, "");
-    }
-    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
-  });
-
-  afterEach(() => {
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
     }
   });
 
@@ -1024,16 +995,6 @@ describe("orphan session recovery", () => {
 });
 
 describe("state management", () => {
-  beforeEach(() => {
-    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
-  });
-
-  afterEach(() => {
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
-    }
-  });
-
   it("returns empty state when file does not exist", () => {
     const state = loadState();
     expect(state).toEqual({});
@@ -1050,17 +1011,6 @@ describe("state management", () => {
 });
 
 describe("processTranscriptWithRecovery", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
-  });
-
-  afterEach(() => {
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
-    }
-  });
-
   it("attributes orphaned prev user + current assistant to current session", async () => {
     // Previous session: user message only (no assistant reply)
     const prevPath = setupTranscriptAt("prev-session.jsonl", [
@@ -1284,17 +1234,6 @@ describe("processTranscriptWithRecovery", () => {
 });
 
 describe("updateActiveTrace name", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mkdirSync(join(testDir, ".claude", "state"), { recursive: true });
-  });
-
-  afterEach(() => {
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
-    }
-  });
-
   it("includes name in updateActiveTrace call", async () => {
     const filePath = setupTranscript([
       { sessionId: "sess1", type: "user", content: "hello" },

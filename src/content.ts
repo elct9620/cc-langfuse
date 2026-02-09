@@ -40,13 +40,16 @@ export function getTimestamp(msg: Message): Date | undefined {
   return undefined;
 }
 
-export function getContent(msg: unknown): unknown {
+export function getContent(msg: unknown): unknown[] | string | undefined {
   if (msg === null || typeof msg !== "object") return undefined;
   const record = msg as Message;
-  if ("message" in record && typeof record.message === "object") {
-    return record.message?.content;
-  }
-  return record.content;
+  const raw =
+    "message" in record && typeof record.message === "object"
+      ? record.message?.content
+      : record.content;
+  if (Array.isArray(raw)) return raw as unknown[];
+  if (typeof raw === "string") return raw;
+  return undefined;
 }
 
 export function isToolResult(msg: Message): boolean {
@@ -80,16 +83,16 @@ export function getUsage(msg: Message): Record<string, number> | undefined {
   const usage = msg.message?.usage;
   if (!usage) return undefined;
 
+  const inputTokens =
+    typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
+  const outputTokens =
+    typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
+
   const details: Record<string, number> = {};
-  if (typeof usage.input_tokens === "number")
-    details.input = usage.input_tokens;
-  if (typeof usage.output_tokens === "number")
-    details.output = usage.output_tokens;
-  if (
-    typeof usage.input_tokens === "number" &&
-    typeof usage.output_tokens === "number"
-  )
-    details.total = usage.input_tokens + usage.output_tokens;
+  if (inputTokens !== undefined) details.input = inputTokens;
+  if (outputTokens !== undefined) details.output = outputTokens;
+  if (inputTokens !== undefined && outputTokens !== undefined)
+    details.total = inputTokens + outputTokens;
   if (typeof usage.cache_read_input_tokens === "number")
     details.cache_read_input_tokens = usage.cache_read_input_tokens;
 
