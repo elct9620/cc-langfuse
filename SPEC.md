@@ -133,11 +133,14 @@ Cost is not set explicitly; Langfuse derives cost automatically from the model r
 
 Each observation carries start and end timestamps derived from the JSONL transcript's `timestamp` field:
 
-| Level      | startTime                          | endTime                                                       |
-| ---------- | ---------------------------------- | ------------------------------------------------------------- |
-| Trace      | User message timestamp             | Latest timestamp among all assistant and tool result messages |
-| Generation | Assistant message timestamp        | Next Generation's start, or current wall-clock time if last   |
-| Tool       | Parent assistant message timestamp | Matching tool_result message timestamp                        |
+| Level      | startTime                                          | endTime                                                       |
+| ---------- | -------------------------------------------------- | ------------------------------------------------------------- |
+| Trace      | User message timestamp                             | Latest timestamp among all assistant and tool result messages |
+| Root Span  | User message timestamp                             | Same as Trace endTime                                         |
+| Generation | Assistant message timestamp                        | Next Generation's start, or current wall-clock time if last   |
+| Tool       | Previous Tool's endTime, or Generation's startTime | Matching tool_result message timestamp                        |
+
+Tools within a Generation are sequential: the first Tool starts at the Generation's startTime, and each subsequent Tool starts at the previous Tool's endTime (its tool_result timestamp). This reflects that Claude Code executes tool calls one after another, not in parallel.
 
 If a message lacks a `timestamp` field, timing for that observation is omitted (SDK defaults to creation time).
 
