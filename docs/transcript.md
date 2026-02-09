@@ -258,9 +258,10 @@ Top-level `timestamp` takes precedence over `message.timestamp`. Non-string time
 ### Content Resolution
 
 ```typescript
-function getContent(msg: unknown): unknown {
-  if ("message" in record) return record.message?.content;
-  return record.content;
+function getContent(msg: Message): ContentBlock[] | string | undefined {
+  if (msg.message && typeof msg.message === "object")
+    return msg.message.content;
+  return msg.content;
 }
 ```
 
@@ -437,5 +438,5 @@ The hook detects orphaned previous sessions via `findPreviousSession()`:
 
 1. Read the first line of the current transcript.
 2. Parse the `sessionId` field.
-3. If `sessionId` differs from the current session ID and is not already in state, the previous session's transcript (at `{directory}/{sessionId}.jsonl`) is processed first.
+3. If `sessionId` differs from the current session ID and the previous session's transcript file (at `{directory}/{sessionId}.jsonl`) exists, the previous session is processed first.
 4. Recovery failure does not block processing of the current session (independent try/catch).

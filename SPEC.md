@@ -66,6 +66,10 @@ Tracing is opt-in per project. Users add this to the project's `.claude/settings
 }
 ```
 
+#### Debug Logging
+
+Set `CC_LANGFUSE_DEBUG` to `"true"` to enable debug-level logging to `~/.claude/state/cc-langfuse_hook.log`.
+
 ### Hook Behavior
 
 Triggered by Claude Code after each assistant response via `pnpm dlx`.
@@ -129,11 +133,11 @@ Cost is not set explicitly; Langfuse derives cost automatically from the model r
 
 Each observation carries start and end timestamps derived from the JSONL transcript's `timestamp` field:
 
-| Level      | startTime                          | endTime                                                 |
-| ---------- | ---------------------------------- | ------------------------------------------------------- |
-| Trace      | User message timestamp             | Last message timestamp in the turn                      |
-| Generation | Assistant message timestamp        | Next Generation's start, or turn end if last Generation |
-| Tool       | Parent assistant message timestamp | Matching tool_result message timestamp                  |
+| Level      | startTime                          | endTime                                                       |
+| ---------- | ---------------------------------- | ------------------------------------------------------------- |
+| Trace      | User message timestamp             | Latest timestamp among all assistant and tool result messages |
+| Generation | Assistant message timestamp        | Next Generation's start, or current wall-clock time if last   |
+| Tool       | Parent assistant message timestamp | Matching tool_result message timestamp                        |
 
 If a message lacks a `timestamp` field, timing for that observation is omitted (SDK defaults to creation time).
 
