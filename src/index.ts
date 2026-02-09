@@ -136,8 +136,6 @@ export async function hook(): Promise<void> {
     const { turns, updatedState } = result;
     saveState(updatedState);
 
-    await spanProcessor.forceFlush();
-
     const duration = (Date.now() - scriptStart) / 1000;
     log("INFO", `Processed ${turns} turns in ${duration.toFixed(1)}s`);
 
@@ -151,6 +149,7 @@ export async function hook(): Promise<void> {
     const message = e instanceof Error ? e.message : String(e);
     log("ERROR", `Failed to process transcript: ${message}`);
   } finally {
+    await spanProcessor.forceFlush();
     await sdk.shutdown();
   }
 }

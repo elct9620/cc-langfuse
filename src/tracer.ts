@@ -184,10 +184,8 @@ export function createTrace(
 
   createGenerations(rootSpan, turn, model, userText);
 
-  if (traceEnd) {
-    rootSpan.end(traceEnd);
-    span.end(traceEnd);
-  }
+  rootSpan.end(traceEnd);
+  span.end(traceEnd);
 
   debug(`Created trace for turn ${turnNum}`);
 }

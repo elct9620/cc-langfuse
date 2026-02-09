@@ -196,6 +196,23 @@ describe("hook", () => {
     });
   });
 
+  it("calls forceFlush even when processing throws an error", async () => {
+    vi.stubEnv("TRACE_TO_LANGFUSE", "true");
+    vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
+    vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
+
+    // Provide a transcript path that doesn't exist to trigger an error
+    mockStdin({
+      session_id: "sess1",
+      transcript_path: "/nonexistent/path.jsonl",
+    });
+
+    await hook();
+
+    expect(mockForceFlush).toHaveBeenCalled();
+    expect(mockSdkShutdown).toHaveBeenCalled();
+  });
+
   it("initializes NodeSDK and processes transcript", async () => {
     vi.stubEnv("TRACE_TO_LANGFUSE", "true");
     vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
@@ -746,6 +763,26 @@ describe("processTranscript", () => {
     );
     expect(generationCall).toBeDefined();
     expect(generationCall![1]).not.toHaveProperty("usageDetails");
+  });
+
+  it("should end all spans even when messages lack timestamps", async () => {
+    const filePath = setupTranscript([
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    // outer span + rootSpan + generation = 3 .end() calls
+    expect(mockObservationEnd).toHaveBeenCalledTimes(3);
   });
 
   it("should omit timing when messages lack timestamp", async () => {

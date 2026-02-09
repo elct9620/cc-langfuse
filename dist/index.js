@@ -381,10 +381,8 @@ function createTrace(sessionId, turnNum, turn) {
 		...childObservationOptions(span, traceStart)
 	});
 	createGenerations(rootSpan, turn, model, userText);
-	if (traceEnd) {
-		rootSpan.end(traceEnd);
-		span.end(traceEnd);
-	}
+	rootSpan.end(traceEnd);
+	span.end(traceEnd);
 	debug(`Created trace for turn ${turnNum}`);
 }
 
@@ -526,13 +524,13 @@ async function hook() {
 		} else result = await processTranscript(sessionId, filePath, state);
 		const { turns, updatedState } = result;
 		saveState(updatedState);
-		await spanProcessor.forceFlush();
 		const duration = (Date.now() - scriptStart) / 1e3;
 		log("INFO", `Processed ${turns} turns in ${duration.toFixed(1)}s`);
 		if (duration > HOOK_WARNING_THRESHOLD_SECONDS) log("WARN", `Hook took ${duration.toFixed(1)}s (>3min), consider optimizing`);
 	} catch (e) {
 		log("ERROR", `Failed to process transcript: ${e instanceof Error ? e.message : String(e)}`);
 	} finally {
+		await spanProcessor.forceFlush();
 		await sdk.shutdown();
 	}
 }
