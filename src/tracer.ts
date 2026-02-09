@@ -50,7 +50,7 @@ function createToolObservations(
   let nextStart = genStart;
   for (const toolCall of toolCalls) {
     const tool = startObservation(
-      `Tool: ${toolCall.name}`,
+      toolCall.name,
       {
         input: toolCall.input,
         metadata: {

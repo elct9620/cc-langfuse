@@ -280,7 +280,7 @@ function childObservationOptions(parent, startTime) {
 function createToolObservations(parentObservation, toolCalls, genStart) {
 	let nextStart = genStart;
 	for (const toolCall of toolCalls) {
-		startObservation(`Tool: ${toolCall.name}`, {
+		startObservation(toolCall.name, {
 			input: toolCall.input,
 			metadata: {
 				tool_name: toolCall.name,

@@ -276,21 +276,21 @@ Session (sessionId)
 └── Trace: "Turn N"
     └── Root Span: "Turn N"            (asType: "agent")
         ├── Generation: "{model}"      (asType: "generation")
-        │   └── Tool: "Tool: {name}"   (asType: "tool")
+        │   └── Tool: "{name}"          (asType: "tool")
         ├── Generation: "{model}"      (asType: "generation")
-        │   ├── Tool: "Tool: {name}"   (asType: "tool")
-        │   └── Tool: "Tool: {name}"   (asType: "tool")
+        │   ├── Tool: "{name}"         (asType: "tool")
+        │   └── Tool: "{name}"         (asType: "tool")
         └── Generation: "{model}"      (asType: "generation")
 ```
 
 ### Data Mapping
 
-| Level      | Name           | input                                              | output                                              |
-| ---------- | -------------- | -------------------------------------------------- | --------------------------------------------------- |
-| Trace      | `Turn N`       | `{ role: "user", content: userText }`              | `{ role: "assistant", content: lastAssistantText }` |
-| Root Span  | `Turn N`       | `{ role: "user", content: userText }`              | `{ role: "assistant", content: lastAssistantText }` |
-| Generation | `{model}`      | `{ role: "user", content: userText }` (first only) | `{ role: "assistant", content: assistantText }`     |
-| Tool       | `Tool: {name}` | Tool call `input`                                  | Matched `tool_result` content                       |
+| Level      | Name      | input                                              | output                                              |
+| ---------- | --------- | -------------------------------------------------- | --------------------------------------------------- |
+| Trace      | `Turn N`  | `{ role: "user", content: userText }`              | `{ role: "assistant", content: lastAssistantText }` |
+| Root Span  | `Turn N`  | `{ role: "user", content: userText }`              | `{ role: "assistant", content: lastAssistantText }` |
+| Generation | `{model}` | `{ role: "user", content: userText }` (first only) | `{ role: "assistant", content: assistantText }`     |
+| Tool       | `{name}`  | Tool call `input`                                  | Matched `tool_result` content                       |
 
 - Only the **first** Generation in a turn carries `input`. Subsequent Generations omit it.
 - The Trace and Root Span both use the **last** assistant message's text as output.

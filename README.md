@@ -85,13 +85,13 @@ Set `CC_LANGFUSE_DEBUG=true` to enable debug logging. Logs are written to `~/.cl
 
 ### Trace Structure
 
-| Level      | Parent     | Name           | Content                       |
-| ---------- | ---------- | -------------- | ----------------------------- |
-| Session    |            | Session ID     | Groups all turns in a session |
-| Trace      | Session    | `Turn N`       | One user-assistant exchange   |
-| Agent      | Trace      | `Turn N`       | Agent span for the turn       |
-| Generation | Agent      | Model name     | Assistant response content    |
-| Tool       | Generation | `Tool: {name}` | Tool input and output         |
+| Level      | Parent     | Name       | Content                       |
+| ---------- | ---------- | ---------- | ----------------------------- |
+| Session    |            | Session ID | Groups all turns in a session |
+| Trace      | Session    | `Turn N`   | One user-assistant exchange   |
+| Agent      | Trace      | `Turn N`   | Agent span for the turn       |
+| Generation | Agent      | Model name | Assistant response content    |
+| Tool       | Generation | `{name}`   | Tool input and output         |
 
 ## Development
 

@@ -313,7 +313,7 @@ describe("processTranscript", () => {
     await processTranscript("sess1", filePath, state);
 
     expect(mockStartObservation).toHaveBeenCalledWith(
-      "Tool: Read",
+      "Read",
       expect.objectContaining({
         input: { path: "/test" },
       }),
@@ -630,7 +630,7 @@ describe("processTranscript", () => {
 
     // Single tool should use genStart as startTime (first tool in sequence)
     expect(mockStartObservation).toHaveBeenCalledWith(
-      "Tool: Read",
+      "Read",
       expect.objectContaining({
         input: { path: "/test" },
       }),

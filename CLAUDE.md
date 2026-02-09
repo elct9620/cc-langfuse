@@ -62,12 +62,12 @@ Triggered by Claude Code `Stop` hook via `pnpm dlx github:elct9620/cc-langfuse`:
 
 ### Trace Structure
 
-| Level      | Parent     | Name           | Content                              |
-| ---------- | ---------- | -------------- | ------------------------------------ |
-| Session    |            | Session ID     | Groups all turns in a session        |
-| Trace      | Session    | `Turn N`       | One user-assistant exchange          |
-| Generation | Trace      | Model name     | Assistant response (one per message) |
-| Tool       | Generation | `Tool: {name}` | Tool input and output                |
+| Level      | Parent     | Name       | Content                              |
+| ---------- | ---------- | ---------- | ------------------------------------ |
+| Session    |            | Session ID | Groups all turns in a session        |
+| Trace      | Session    | `Turn N`   | One user-assistant exchange          |
+| Generation | Trace      | Model name | Assistant response (one per message) |
+| Tool       | Generation | `{name}`   | Tool input and output                |
 
 ### Environment Variables
 
