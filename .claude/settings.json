@@ -7,7 +7,8 @@
       "Bash(pnpm format:*)",
       "Bash(pnpm build:*)",
       "Bash(pnpm install:*)",
-      "Bash(pnpm typecheck:*)"
+      "Bash(pnpm typecheck:*)",
+      "Bash(pnpm test:coverage:*)"
     ]
   },
   "hooks": {
