@@ -6,40 +6,6 @@ import { parseNewMessages } from "./filesystem.js";
 import type { State } from "./filesystem.js";
 import { createTrace } from "./tracer.js";
 
-interface UpdateStateParams {
-  state: State;
-  sessionId: string;
-  turnCount: number;
-  newTurns: number;
-  consumed: number;
-  lineOffsets: number[];
-  lastLine: number;
-  now: Date;
-}
-
-function computeUpdatedState(params: UpdateStateParams): State {
-  const {
-    state,
-    sessionId,
-    turnCount,
-    newTurns,
-    consumed,
-    lineOffsets,
-    lastLine,
-    now,
-  } = params;
-  const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
-
-  return {
-    ...state,
-    [sessionId]: {
-      last_line: newLastLine,
-      turn_count: turnCount + newTurns,
-      updated: now.toISOString(),
-    },
-  };
-}
-
 export async function processTranscript(
   sessionId: string,
   transcriptFile: string,
@@ -66,16 +32,16 @@ export async function processTranscript(
     }
   });
 
-  const updatedState = computeUpdatedState({
-    state,
-    sessionId,
-    turnCount,
-    newTurns: turns.length,
-    consumed,
-    lineOffsets: parsed.lineOffsets,
-    lastLine,
-    now: new Date(),
-  });
+  const newLastLine =
+    consumed > 0 ? parsed.lineOffsets[consumed - 1] : lastLine;
+  const updatedState: State = {
+    ...state,
+    [sessionId]: {
+      last_line: newLastLine,
+      turn_count: turnCount + turns.length,
+      updated: new Date().toISOString(),
+    },
+  };
 
   return { turns: turns.length, updatedState };
 }
