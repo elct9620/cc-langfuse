@@ -147,6 +147,24 @@ function createGenerations(
   }
 }
 
+function buildTraceMetadata(
+  turnNum: number,
+  sessionId: string,
+  sessionMetadata?: SessionMetadata,
+): Record<string, unknown> {
+  return {
+    source: "claude-code",
+    turn_number: turnNum,
+    session_id: sessionId,
+    ...(sessionMetadata && {
+      version: sessionMetadata.version,
+      slug: sessionMetadata.slug,
+      cwd: sessionMetadata.cwd,
+      git_branch: sessionMetadata.gitBranch,
+    }),
+  };
+}
+
 export function createTrace(
   sessionId: string,
   turnNum: number,
@@ -171,17 +189,7 @@ export function createTrace(
     sessionId,
     input: { role: "user", content: userText },
     output: { role: "assistant", content: lastAssistantText },
-    metadata: {
-      source: "claude-code",
-      turn_number: turnNum,
-      session_id: sessionId,
-      ...(sessionMetadata && {
-        version: sessionMetadata.version,
-        slug: sessionMetadata.slug,
-        cwd: sessionMetadata.cwd,
-        git_branch: sessionMetadata.gitBranch,
-      }),
-    },
+    metadata: buildTraceMetadata(turnNum, sessionId, sessionMetadata),
   });
 
   // Use global startObservation() with explicit parentSpanContext.
