@@ -12,6 +12,7 @@ cc-langfuse is a Node.js CLI hook tool for Claude Code that parses `.jsonl` tran
 - `pnpm typecheck` — type-check with `tsc --noEmit` (no output files)
 - `pnpm test` — run all tests (vitest)
 - `pnpm test -- test/parser.test.ts` — run a single test file
+- `pnpm test:coverage` — run tests with v8 coverage
 - `pnpm format` — format all files with prettier
 - `pnpm format:check` — check formatting without writing
 
@@ -80,8 +81,28 @@ Triggered by Claude Code `Stop` hook via `pnpm dlx github:elct9620/cc-langfuse`:
 
 `CC_LANGFUSE_*` prefixed variants take precedence over `LANGFUSE_*` variants.
 
+### Type System Patterns
+
+- **Discriminated unions** for all variant types: `ContentBlock` discriminates on `type`, `Message` on `role`
+- **Named type guards** in `src/content.ts` (e.g. `isTextBlock()`, `isToolUseBlock()`) — prefer these over inline checks
+- **External data boundary**: `RawMessage` is the loose shape from JSONL; `classifyMessage()` validates and converts to strict `Message` variants (returns `null` for unrecognizable input)
+- **Graceful degradation**: accessors return `undefined` or empty defaults for missing data; the hook never crashes on bad input
+
+### Error Handling
+
+- `loadState()` returns `{}` on any file read failure
+- `parseNewMessages()` skips malformed JSON lines with debug logging
+- `classifyMessage()` returns `null` for unrecognizable messages; callers filter them out
+- The hook must never crash — it runs as a Claude Code stop hook and failures would degrade UX
+
+## CI/CD
+
+- **Test workflow** (`.github/workflows/test.yml`): runs typecheck, format:check, test on push to main and PRs
+- **Release**: automated via Release Please (`.github/workflows/release-please.yml`) — conventional commits trigger version bumps
+
 ## Conventions
 
 - Conventional commits (e.g. `feat(scope):`, `fix:`, `chore:`)
-- Prettier auto-runs on Edit/Write via Claude Code PostToolUse hook
+- Prettier auto-runs on Edit/Write via Claude Code PostToolUse hook (no explicit config file; uses Prettier defaults)
 - Tests use vitest with `describe`/`it`/`expect` pattern
+- No circular imports or re-exports between modules
