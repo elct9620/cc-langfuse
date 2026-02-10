@@ -106,6 +106,27 @@ describe("classifyMessage", () => {
     ).toBeNull();
   });
 
+  it("classifies user tool result from message.content", () => {
+    const msg = classifyMessage({
+      type: "user",
+      message: {
+        id: "",
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "file data" },
+        ],
+      },
+    });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "file data" },
+        ],
+      }),
+    );
+  });
+
   it("returns null for unrecognizable messages", () => {
     expect(classifyMessage({})).toBeNull();
   });
@@ -599,6 +620,61 @@ describe("groupTurns", () => {
     const { turns, consumed } = groupTurns(messages);
     expect(turns).toHaveLength(1);
     expect(consumed).toBe(3);
+  });
+
+  it("groups tool results with content in message.content into single turn", () => {
+    const raw: import("../src/types.js").RawMessage[] = [
+      { type: "user", content: "read file" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [
+            {
+              type: "tool_use",
+              id: "t1",
+              name: "Read",
+              input: { path: "/" },
+            } satisfies import("../src/types.js").ToolUseBlock,
+          ],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          id: "",
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "t1",
+              content: "file data",
+            } satisfies import("../src/types.js").ToolResultBlock,
+          ],
+        },
+      },
+      {
+        message: {
+          id: "m2",
+          role: "assistant",
+          model: "claude",
+          content: [
+            {
+              type: "text",
+              text: "done",
+            } satisfies import("../src/types.js").TextBlock,
+          ],
+        },
+      },
+    ];
+    const messages = raw
+      .map((r) => classifyMessage(r))
+      .filter((m): m is Message => m !== null);
+    const { turns } = groupTurns(messages);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].toolResults).toHaveLength(1);
+    expect(turns[0].assistants).toHaveLength(2);
   });
 
   it("does not produce turns when messages start with tool_result", () => {

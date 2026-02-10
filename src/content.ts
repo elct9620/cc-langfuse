@@ -63,7 +63,7 @@ export function classifyMessage(raw: RawMessage): Message | null {
   if (role === "user") {
     return {
       role: "user",
-      content: normalizeContent(raw.content),
+      content: normalizeContent(raw.message?.content ?? raw.content),
       timestamp: raw.timestamp,
       sessionId: raw.sessionId,
       version: raw.version,
