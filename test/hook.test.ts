@@ -100,7 +100,7 @@ afterEach(() => {
 });
 
 // Import after mocks
-const { hook } = await import("../src/index.js");
+const { hook, readHookInput } = await import("../src/index.js");
 const { processTranscript, processTranscriptWithRecovery } =
   await import("../src/processor.js");
 const { loadState, saveState, findPreviousSession } =
@@ -1491,5 +1491,47 @@ describe("updateTrace name", () => {
     expect(mockUpdateTrace).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Turn 2" }),
     );
+  });
+});
+
+describe("readHookInput", () => {
+  it("parses valid hook input from an async iterable", async () => {
+    const input = Readable.from([
+      JSON.stringify({
+        session_id: "sess1",
+        transcript_path: "/path/to/file.jsonl",
+      }),
+    ]);
+
+    const result = await readHookInput(input);
+
+    expect(result).toEqual({
+      session_id: "sess1",
+      transcript_path: "/path/to/file.jsonl",
+    });
+  });
+
+  it("returns null for empty input", async () => {
+    const input = Readable.from([""]);
+
+    const result = await readHookInput(input);
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null for invalid JSON", async () => {
+    const input = Readable.from(["not valid json"]);
+
+    const result = await readHookInput(input);
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null when required fields are missing", async () => {
+    const input = Readable.from([JSON.stringify({ session_id: "sess1" })]);
+
+    const result = await readHookInput(input);
+
+    expect(result).toBeNull();
   });
 });

@@ -23,16 +23,26 @@ function debug(message) {
 //#endregion
 //#region src/filesystem.ts
 const STATE_FILE = join(homedir(), ".claude", "state", "cc-langfuse_state.json");
+function isValidState(data) {
+	if (typeof data !== "object" || data === null || Array.isArray(data)) return false;
+	for (const v of Object.values(data)) if (typeof v !== "object" || v === null || typeof v.last_line !== "number" || typeof v.turn_count !== "number") return false;
+	return true;
+}
 /**
 * Loads persisted session state from disk.
 *
 * Returns empty state on any failure (missing file, corrupt JSON, permission
-* errors) — this is intentional graceful degradation so the hook can always
-* proceed by reprocessing from scratch rather than crashing.
+* errors, invalid shape) — this is intentional graceful degradation so the
+* hook can always proceed by reprocessing from scratch rather than crashing.
 */
 function loadState() {
 	try {
-		return JSON.parse(readFileSync(STATE_FILE, "utf8"));
+		const data = JSON.parse(readFileSync(STATE_FILE, "utf8"));
+		if (!isValidState(data)) {
+			debug("State file has invalid shape, resetting to empty state");
+			return {};
+		}
+		return data;
 	} catch (e) {
 		debug(`Failed to load state: ${e}`);
 		return {};
@@ -65,18 +75,28 @@ function findPreviousSession(transcriptPath, currentSessionId) {
 function parseNewMessages(transcriptFile, lastLine) {
 	const raw = readFileSync(transcriptFile, "utf8").trim();
 	if (!raw) return null;
-	const lines = raw.split("\n");
-	if (lastLine >= lines.length) {
-		debug(`No new lines to process (last: ${lastLine}, total: ${lines.length})`);
+	let offset = 0;
+	for (let skip = 0; skip < lastLine && offset < raw.length; skip++) {
+		const nl = raw.indexOf("\n", offset);
+		if (nl === -1) {
+			offset = raw.length;
+			break;
+		}
+		offset = nl + 1;
+	}
+	const remaining = raw.slice(offset);
+	if (!remaining) {
+		debug(`No new lines to process (last: ${lastLine})`);
 		return null;
 	}
+	const lines = remaining.split("\n");
 	const messages = [];
 	const lineOffsets = [];
-	for (let i = lastLine; i < lines.length; i++) try {
+	for (let i = 0; i < lines.length; i++) try {
 		messages.push(JSON.parse(lines[i]));
-		lineOffsets.push(i + 1);
+		lineOffsets.push(lastLine + i + 1);
 	} catch (e) {
-		debug(`Skipping line ${i}: ${e}`);
+		debug(`Skipping line ${lastLine + i}: ${e}`);
 		continue;
 	}
 	return messages.length > 0 ? {
@@ -357,7 +377,7 @@ function computeTraceContext(turn) {
 		traceEnd: traceStart && turn.durationMs !== void 0 ? new Date(traceStart.getTime() + turn.durationMs) : computeTraceEnd([...turn.assistants, ...turn.toolResults])
 	};
 }
-function createGenerations(parentObservation, turn, model, userText) {
+function createGenerations(parentObservation, turn, model, userText, now) {
 	for (let i = 0; i < turn.assistants.length; i++) {
 		const nextGenStart = i + 1 < turn.assistants.length ? getTimestamp(turn.assistants[i + 1]) : void 0;
 		createGenerationObservation({
@@ -367,7 +387,7 @@ function createGenerations(parentObservation, turn, model, userText) {
 			turn,
 			model,
 			userText,
-			genEnd: nextGenStart ?? /* @__PURE__ */ new Date()
+			genEnd: nextGenStart ?? now
 		});
 	}
 }
@@ -410,7 +430,7 @@ function createTrace(sessionId, turnNum, turn, sessionMetadata) {
 		asType: "agent",
 		...childObservationOptions(span, traceStart)
 	});
-	createGenerations(rootSpan, turn, model, userText);
+	createGenerations(rootSpan, turn, model, userText, /* @__PURE__ */ new Date());
 	rootSpan.end(traceEnd);
 	span.end(traceEnd);
 	debug(`Created trace for turn ${turnNum}`);
@@ -419,14 +439,14 @@ function createTrace(sessionId, turnNum, turn, sessionMetadata) {
 //#endregion
 //#region src/processor.ts
 function computeUpdatedState(params) {
-	const { state, sessionId, turnCount, newTurns, consumed, lineOffsets, lastLine } = params;
+	const { state, sessionId, turnCount, newTurns, consumed, lineOffsets, lastLine, now } = params;
 	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
 	return {
 		...state,
 		[sessionId]: {
 			last_line: newLastLine,
 			turn_count: turnCount + newTurns,
-			updated: (/* @__PURE__ */ new Date()).toISOString()
+			updated: now.toISOString()
 		}
 	};
 }
@@ -459,7 +479,8 @@ async function processTranscript(sessionId, transcriptFile, state) {
 		newTurns: turns.length,
 		consumed,
 		lineOffsets: parsed.lineOffsets,
-		lastLine
+		lastLine,
+		now: /* @__PURE__ */ new Date()
 	});
 	return {
 		turns: turns.length,
@@ -478,9 +499,9 @@ async function processTranscriptWithRecovery(currentSessionId, currentFile, prev
 //#endregion
 //#region src/index.ts
 const HOOK_WARNING_THRESHOLD_SECONDS = 180;
-async function readHookInput() {
+async function readHookInput(input = process.stdin) {
 	const chunks = [];
-	for await (const chunk of process.stdin) chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+	for await (const chunk of input) chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
 	const raw = chunks.join("").trim();
 	if (!raw) return null;
 	try {
@@ -557,4 +578,4 @@ async function hook() {
 }
 
 //#endregion
-export { hook };
+export { hook, readHookInput };

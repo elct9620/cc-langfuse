@@ -127,6 +127,7 @@ function createGenerations(
   turn: Turn,
   model: string,
   userText: string,
+  now: Date,
 ): void {
   for (let i = 0; i < turn.assistants.length; i++) {
     const nextGenStart =
@@ -141,7 +142,7 @@ function createGenerations(
       turn,
       model,
       userText,
-      genEnd: nextGenStart ?? new Date(),
+      genEnd: nextGenStart ?? now,
     });
   }
 }
@@ -198,7 +199,8 @@ export function createTrace(
     },
   );
 
-  createGenerations(rootSpan, turn, model, userText);
+  const now = new Date();
+  createGenerations(rootSpan, turn, model, userText, now);
 
   rootSpan.end(traceEnd);
   span.end(traceEnd);

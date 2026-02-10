@@ -19,16 +19,36 @@ export interface SessionState {
 
 export type State = Record<string, SessionState>;
 
+function isValidState(data: unknown): data is State {
+  if (typeof data !== "object" || data === null || Array.isArray(data))
+    return false;
+  for (const v of Object.values(data)) {
+    if (
+      typeof v !== "object" ||
+      v === null ||
+      typeof (v as SessionState).last_line !== "number" ||
+      typeof (v as SessionState).turn_count !== "number"
+    )
+      return false;
+  }
+  return true;
+}
+
 /**
  * Loads persisted session state from disk.
  *
  * Returns empty state on any failure (missing file, corrupt JSON, permission
- * errors) — this is intentional graceful degradation so the hook can always
- * proceed by reprocessing from scratch rather than crashing.
+ * errors, invalid shape) — this is intentional graceful degradation so the
+ * hook can always proceed by reprocessing from scratch rather than crashing.
  */
 export function loadState(): State {
   try {
-    return JSON.parse(readFileSync(STATE_FILE, "utf8")) as State;
+    const data: unknown = JSON.parse(readFileSync(STATE_FILE, "utf8"));
+    if (!isValidState(data)) {
+      debug("State file has invalid shape, resetting to empty state");
+      return {};
+    }
+    return data;
   } catch (e) {
     debug(`Failed to load state: ${e}`);
     return {};
@@ -79,22 +99,31 @@ export function parseNewMessages(
   const raw = readFileSync(transcriptFile, "utf8").trim();
   if (!raw) return null;
 
-  const lines = raw.split("\n");
-  if (lastLine >= lines.length) {
-    debug(
-      `No new lines to process (last: ${lastLine}, total: ${lines.length})`,
-    );
+  let offset = 0;
+  for (let skip = 0; skip < lastLine && offset < raw.length; skip++) {
+    const nl = raw.indexOf("\n", offset);
+    if (nl === -1) {
+      offset = raw.length;
+      break;
+    }
+    offset = nl + 1;
+  }
+
+  const remaining = raw.slice(offset);
+  if (!remaining) {
+    debug(`No new lines to process (last: ${lastLine})`);
     return null;
   }
 
+  const lines = remaining.split("\n");
   const messages: Message[] = [];
   const lineOffsets: number[] = [];
-  for (let i = lastLine; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; i++) {
     try {
       messages.push(JSON.parse(lines[i]));
-      lineOffsets.push(i + 1);
+      lineOffsets.push(lastLine + i + 1);
     } catch (e) {
-      debug(`Skipping line ${i}: ${e}`);
+      debug(`Skipping line ${lastLine + i}: ${e}`);
       continue;
     }
   }

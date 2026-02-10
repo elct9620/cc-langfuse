@@ -20,7 +20,9 @@ afterEach(() => {
   }
 });
 
-const { parseNewMessages } = await import("../src/filesystem.js");
+const { parseNewMessages, loadState } = await import("../src/filesystem.js");
+
+const STATE_FILE = join(testDir, ".claude", "state", "cc-langfuse_state.json");
 
 function writeTranscript(lines: string[]): string {
   const dir = join(testDir, ".claude", "projects", "test-project");
@@ -127,5 +129,45 @@ describe("parseNewMessages", () => {
     const result = parseNewMessages(filePath, 1);
 
     expect(result).toBeNull();
+  });
+});
+
+describe("loadState", () => {
+  it("returns empty state when file does not exist", () => {
+    expect(loadState()).toEqual({});
+  });
+
+  it("returns empty state when JSON is an array", () => {
+    writeFileSync(STATE_FILE, "[]");
+    expect(loadState()).toEqual({});
+  });
+
+  it("returns empty state when session value is missing last_line", () => {
+    writeFileSync(
+      STATE_FILE,
+      JSON.stringify({ sess1: { turn_count: 1, updated: "" } }),
+    );
+    expect(loadState()).toEqual({});
+  });
+
+  it("returns empty state when session value is missing turn_count", () => {
+    writeFileSync(
+      STATE_FILE,
+      JSON.stringify({ sess1: { last_line: 5, updated: "" } }),
+    );
+    expect(loadState()).toEqual({});
+  });
+
+  it("returns empty state when session value is a string", () => {
+    writeFileSync(STATE_FILE, JSON.stringify({ sess1: "corrupt" }));
+    expect(loadState()).toEqual({});
+  });
+
+  it("returns valid state when shape is correct", () => {
+    const state = {
+      sess1: { last_line: 10, turn_count: 3, updated: "2024-01-01" },
+    };
+    writeFileSync(STATE_FILE, JSON.stringify(state));
+    expect(loadState()).toEqual(state);
   });
 });

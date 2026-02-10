@@ -14,6 +14,7 @@ interface UpdateStateParams {
   consumed: number;
   lineOffsets: number[];
   lastLine: number;
+  now: Date;
 }
 
 function computeUpdatedState(params: UpdateStateParams): State {
@@ -25,6 +26,7 @@ function computeUpdatedState(params: UpdateStateParams): State {
     consumed,
     lineOffsets,
     lastLine,
+    now,
   } = params;
   const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
 
@@ -33,7 +35,7 @@ function computeUpdatedState(params: UpdateStateParams): State {
     [sessionId]: {
       last_line: newLastLine,
       turn_count: turnCount + newTurns,
-      updated: new Date().toISOString(),
+      updated: now.toISOString(),
     },
   };
 }
@@ -72,6 +74,7 @@ export async function processTranscript(
     consumed,
     lineOffsets: parsed.lineOffsets,
     lastLine,
+    now: new Date(),
   });
 
   return { turns: turns.length, updatedState };

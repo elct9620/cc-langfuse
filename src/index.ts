@@ -14,9 +14,11 @@ interface HookInput {
   transcript_path: string;
 }
 
-async function readHookInput(): Promise<HookInput | null> {
+export async function readHookInput(
+  input: AsyncIterable<string | Buffer> = process.stdin,
+): Promise<HookInput | null> {
   const chunks: string[] = [];
-  for await (const chunk of process.stdin) {
+  for await (const chunk of input) {
     chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
   }
   const raw = chunks.join("").trim();
