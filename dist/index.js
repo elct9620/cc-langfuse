@@ -22,6 +22,12 @@ function debug(message) {
 
 //#endregion
 //#region src/content.ts
+function isTextBlock(item) {
+	return item.type === "text";
+}
+function isToolUseBlock(item) {
+	return item.type === "tool_use";
+}
 function isToolResultBlock(item) {
 	return item.type === "tool_result";
 }
@@ -72,11 +78,11 @@ function isToolResult(msg) {
 	return msg.content.some(isToolResultBlock);
 }
 function getToolCalls(msg) {
-	return msg.content.filter((item) => item.type === "tool_use");
+	return msg.content.filter(isToolUseBlock);
 }
 function getTextContent(msg) {
 	const parts = [];
-	for (const item of msg.content) if (item.type === "text") parts.push(item.text);
+	for (const item of msg.content) if (isTextBlock(item)) parts.push(item.text);
 	return parts.join("\n");
 }
 function getSessionMetadata(msg) {
@@ -270,7 +276,7 @@ function groupTurns(messages) {
 }
 function findToolResultBlock(toolResults, toolUseId) {
 	for (const msg of toolResults) {
-		const block = msg.content.find((item) => item.type === "tool_result" && item.tool_use_id === toolUseId);
+		const block = msg.content.find((item) => isToolResultBlock(item) && item.tool_use_id === toolUseId);
 		if (block) return {
 			block,
 			message: msg

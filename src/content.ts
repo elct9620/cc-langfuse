@@ -5,11 +5,20 @@ import type {
   UserMessage,
   AssistantMessage,
   SessionMetadata,
+  TextBlock,
   ToolUseBlock,
   ToolResultBlock,
 } from "./types.js";
 
 // --- Content block type guards ---
+
+export function isTextBlock(item: ContentBlock): item is TextBlock {
+  return item.type === "text";
+}
+
+export function isToolUseBlock(item: ContentBlock): item is ToolUseBlock {
+  return item.type === "tool_use";
+}
 
 export function isToolResultBlock(item: ContentBlock): item is ToolResultBlock {
   return item.type === "tool_result";
@@ -79,15 +88,13 @@ export function isToolResult(msg: UserMessage): boolean {
 }
 
 export function getToolCalls(msg: AssistantMessage): ToolUseBlock[] {
-  return msg.content.filter(
-    (item): item is ToolUseBlock => item.type === "tool_use",
-  );
+  return msg.content.filter(isToolUseBlock);
 }
 
 export function getTextContent(msg: UserMessage | AssistantMessage): string {
   const parts: string[] = [];
   for (const item of msg.content) {
-    if (item.type === "text") {
+    if (isTextBlock(item)) {
       parts.push(item.text);
     }
   }

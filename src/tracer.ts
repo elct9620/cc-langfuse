@@ -74,7 +74,7 @@ function createToolObservations(
     tool
       .update({
         output: toolCall.output,
-        ...(toolCall.is_error && { level: "ERROR" as const }),
+        ...(toolCall.is_error && { level: "ERROR" }),
       })
       .end(toolCall.timestamp);
     nextStart = toolCall.timestamp ?? nextStart;

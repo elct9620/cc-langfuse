@@ -91,7 +91,7 @@ export interface ToolCall {
   input: unknown;
   output: unknown;
   timestamp?: Date;
-  is_error?: boolean;
+  is_error: boolean;
 }
 
 export interface Turn {

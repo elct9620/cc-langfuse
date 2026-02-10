@@ -10,7 +10,7 @@ import type {
   GroupTurnsResult,
 } from "./types.js";
 
-import { getTimestamp, isToolResult } from "./content.js";
+import { getTimestamp, isToolResult, isToolResultBlock } from "./content.js";
 
 export function mergeAssistantParts(
   parts: AssistantMessage[],
@@ -131,7 +131,7 @@ function findToolResultBlock(
   for (const msg of toolResults) {
     const block = msg.content.find(
       (item): item is ToolResultBlock =>
-        item.type === "tool_result" && item.tool_use_id === toolUseId,
+        isToolResultBlock(item) && item.tool_use_id === toolUseId,
     );
     if (block) return { block, message: msg };
   }
