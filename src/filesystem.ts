@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { debug } from "./logger.js";
-import type { Message } from "./types.js";
+import { classifyMessage } from "./content.js";
+import type { Message, RawMessage } from "./types.js";
 
 const STATE_FILE = join(
   homedir(),
@@ -111,7 +112,10 @@ export function parseNewMessages(
   const lineOffsets: number[] = [];
   for (let i = 0; i < lines.length; i++) {
     try {
-      messages.push(JSON.parse(lines[i]));
+      const parsed: RawMessage = JSON.parse(lines[i]);
+      const msg = classifyMessage(parsed);
+      if (!msg) continue;
+      messages.push(msg);
       lineOffsets.push(lastLine + i + 1);
     } catch (e) {
       debug(`Skipping line ${lastLine + i}: ${e}`);

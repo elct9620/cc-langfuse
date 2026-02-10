@@ -21,6 +21,96 @@ function debug(message) {
 }
 
 //#endregion
+//#region src/content.ts
+function isBlockOfType(item, type) {
+	return typeof item === "object" && item !== null && "type" in item && item.type === type;
+}
+function isTextBlock(item) {
+	return isBlockOfType(item, "text");
+}
+function isToolUseBlock(item) {
+	return isBlockOfType(item, "tool_use");
+}
+function isToolResultBlock(item) {
+	return isBlockOfType(item, "tool_result");
+}
+function normalizeContent(raw) {
+	if (Array.isArray(raw)) return raw;
+	if (typeof raw === "string") return [{
+		type: "text",
+		text: raw
+	}];
+	return [];
+}
+function classifyMessage(raw) {
+	if (raw.isMeta) return null;
+	if (raw.type === "system") return {
+		role: "system",
+		subtype: raw.subtype,
+		durationMs: raw.durationMs,
+		timestamp: raw.timestamp
+	};
+	const role = raw.type ?? raw.message?.role;
+	if (role === "assistant") {
+		const body = raw.message;
+		return {
+			role: "assistant",
+			id: body?.id ?? "",
+			model: body?.model ?? "unknown",
+			content: normalizeContent(body?.content ?? raw.content),
+			usage: body?.usage,
+			timestamp: raw.timestamp ?? body?.timestamp
+		};
+	}
+	if (role === "user") return {
+		role: "user",
+		content: normalizeContent(raw.content),
+		timestamp: raw.timestamp,
+		sessionId: raw.sessionId,
+		version: raw.version,
+		slug: raw.slug,
+		cwd: raw.cwd,
+		gitBranch: raw.gitBranch
+	};
+	return null;
+}
+function getTimestamp(msg) {
+	if (msg.timestamp) return new Date(msg.timestamp);
+}
+function isToolResult(msg) {
+	return msg.content.some(isToolResultBlock);
+}
+function getToolCalls(msg) {
+	return msg.content.filter(isToolUseBlock);
+}
+function getTextContent(msg) {
+	const parts = [];
+	for (const item of msg.content) if (isTextBlock(item)) parts.push(item.text);
+	return parts.join("\n");
+}
+function getSessionMetadata(msg) {
+	const metadata = {};
+	if (msg.version) metadata.version = msg.version;
+	if (msg.slug) metadata.slug = msg.slug;
+	if (msg.cwd) metadata.cwd = msg.cwd;
+	if (msg.gitBranch) metadata.gitBranch = msg.gitBranch;
+	return Object.keys(metadata).length > 0 ? metadata : void 0;
+}
+function getUsage(msg) {
+	const usage = msg.usage;
+	if (!usage) return void 0;
+	const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : void 0;
+	const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : void 0;
+	const details = {};
+	if (inputTokens !== void 0) details.input = inputTokens;
+	if (outputTokens !== void 0) details.output = outputTokens;
+	if (inputTokens !== void 0 && outputTokens !== void 0) details.total = inputTokens + outputTokens;
+	if (typeof usage.cache_read_input_tokens === "number") details.cache_read_input_tokens = usage.cache_read_input_tokens;
+	if (typeof usage.cache_creation_input_tokens === "number") details.cache_creation_input_tokens = usage.cache_creation_input_tokens;
+	return Object.keys(details).length > 0 ? details : void 0;
+}
+
+//#endregion
 //#region src/filesystem.ts
 const STATE_FILE = join(homedir(), ".claude", "state", "cc-langfuse_state.json");
 function isValidState(data) {
@@ -83,7 +173,9 @@ function parseNewMessages(transcriptFile, lastLine) {
 	const messages = [];
 	const lineOffsets = [];
 	for (let i = 0; i < lines.length; i++) try {
-		messages.push(JSON.parse(lines[i]));
+		const msg = classifyMessage(JSON.parse(lines[i]));
+		if (!msg) continue;
+		messages.push(msg);
 		lineOffsets.push(lastLine + i + 1);
 	} catch (e) {
 		debug(`Skipping line ${lastLine + i}: ${e}`);
@@ -96,86 +188,21 @@ function parseNewMessages(transcriptFile, lastLine) {
 }
 
 //#endregion
-//#region src/content.ts
-function isBlockOfType(item, type) {
-	return typeof item === "object" && item !== null && "type" in item && item.type === type;
-}
-function isTextBlock(item) {
-	return isBlockOfType(item, "text");
-}
-function isToolUseBlock(item) {
-	return isBlockOfType(item, "tool_use");
-}
-function isToolResultBlock(item) {
-	return isBlockOfType(item, "tool_result");
-}
-function getTimestamp(msg) {
-	const ts = msg.timestamp ?? msg.message?.timestamp;
-	if (typeof ts === "string") return new Date(ts);
-}
-function getContent(msg) {
-	const raw = msg.message && typeof msg.message === "object" ? msg.message.content : msg.content;
-	if (Array.isArray(raw)) return raw;
-	if (typeof raw === "string") return [{
-		type: "text",
-		text: raw
-	}];
-	return [];
-}
-function isToolResult(msg) {
-	return getContent(msg).some(isToolResultBlock);
-}
-function getToolCalls(msg) {
-	return getContent(msg).filter(isToolUseBlock);
-}
-function getTextContent(msg) {
-	const parts = [];
-	for (const item of getContent(msg)) if (isTextBlock(item)) parts.push(item.text);
-	return parts.join("\n");
-}
-function getSessionMetadata(msg) {
-	const metadata = {};
-	if (msg.version) metadata.version = msg.version;
-	if (msg.slug) metadata.slug = msg.slug;
-	if (msg.cwd) metadata.cwd = msg.cwd;
-	if (msg.gitBranch) metadata.gitBranch = msg.gitBranch;
-	return Object.keys(metadata).length > 0 ? metadata : void 0;
-}
-function getUsage(msg) {
-	const usage = msg.message?.usage;
-	if (!usage) return void 0;
-	const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : void 0;
-	const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : void 0;
-	const details = {};
-	if (inputTokens !== void 0) details.input = inputTokens;
-	if (outputTokens !== void 0) details.output = outputTokens;
-	if (inputTokens !== void 0 && outputTokens !== void 0) details.total = inputTokens + outputTokens;
-	if (typeof usage.cache_read_input_tokens === "number") details.cache_read_input_tokens = usage.cache_read_input_tokens;
-	if (typeof usage.cache_creation_input_tokens === "number") details.cache_creation_input_tokens = usage.cache_creation_input_tokens;
-	return Object.keys(details).length > 0 ? details : void 0;
-}
-
-//#endregion
 //#region src/parser.ts
 function mergeAssistantParts(parts) {
-	const mergedContent = [];
-	for (const part of parts) mergedContent.push(...getContent(part));
-	const result = { ...parts[0] };
-	if (result.message) {
-		result.message = {
-			...result.message,
-			content: mergedContent
-		};
-		const lastPart = parts[parts.length - 1];
-		if (lastPart.message?.usage) result.message.usage = lastPart.message.usage;
-	} else result.content = mergedContent;
-	return result;
+	const mergedContent = parts.flatMap((p) => p.content);
+	const lastPart = parts[parts.length - 1];
+	return {
+		...parts[0],
+		content: mergedContent,
+		usage: lastPart.usage ?? parts[0].usage
+	};
 }
 var AssistantPartAccumulator = class {
 	parts = [];
 	msgId = null;
 	add(msg) {
-		const id = msg.message?.id;
+		const id = msg.id;
 		if (!id || id === this.msgId) {
 			this.parts.push(msg);
 			return;
@@ -204,18 +231,13 @@ var TurnBuilder = class {
 	build(messages) {
 		let idx = 0;
 		for (const msg of messages) {
-			if (msg.isMeta === true) {
+			if (msg.role === "system") {
+				if (msg.subtype === "turn_duration") this.pendingDurationMs = msg.durationMs;
 				idx++;
 				continue;
 			}
-			if (msg.type === "system" && msg.subtype === "turn_duration") {
-				this.pendingDurationMs = msg.durationMs;
-				idx++;
-				continue;
-			}
-			const role = msg.type ?? msg.message?.role;
-			if (role === "user") this.handleUser(msg, idx);
-			else if (role === "assistant") this.handleAssistant(msg);
+			if (msg.role === "user") this.handleUser(msg, idx);
+			else if (msg.role === "assistant") this.handleAssistant(msg);
 			idx++;
 		}
 		this.finalizeTurn(messages.length);
@@ -259,7 +281,7 @@ function groupTurns(messages) {
 }
 function findToolResultBlock(toolResults, toolUseId) {
 	for (const msg of toolResults) {
-		const block = getContent(msg).find((item) => isToolResultBlock(item) && item.tool_use_id === toolUseId);
+		const block = msg.content.find((item) => isToolResultBlock(item) && item.tool_use_id === toolUseId);
 		if (block) return {
 			block,
 			message: msg
@@ -319,7 +341,7 @@ function createToolObservations(parentObservation, toolCalls, genStart) {
 function createGenerationObservation(ctx) {
 	const { parentObservation, assistant, index, toolResults, model, userText, genEnd } = ctx;
 	const assistantText = getTextContent(assistant);
-	const assistantModel = assistant.message?.model ?? model;
+	const assistantModel = assistant.model ?? model;
 	const toolCalls = matchToolResults(getToolCalls(assistant), toolResults);
 	const genStart = getTimestamp(assistant);
 	const usageDetails = getUsage(assistant);
@@ -345,7 +367,7 @@ function createGenerationObservation(ctx) {
 function computeTraceContext(turn) {
 	const userText = getTextContent(turn.user);
 	const lastAssistantText = getTextContent(turn.assistants[turn.assistants.length - 1]);
-	const model = turn.assistants[0]?.message?.model ?? "claude";
+	const model = turn.assistants[0]?.model ?? "claude";
 	const traceStart = getTimestamp(turn.user);
 	return {
 		userText,

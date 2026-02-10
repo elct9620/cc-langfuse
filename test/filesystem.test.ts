@@ -33,7 +33,7 @@ function writeTranscript(lines: string[]): string {
 }
 
 describe("parseNewMessages", () => {
-  it("returns all messages when lastLine is 0", () => {
+  it("returns all classified messages when lastLine is 0", () => {
     const filePath = writeTranscript([
       JSON.stringify({ type: "user", content: "hello" }),
       JSON.stringify({ type: "assistant", content: "hi" }),
@@ -43,8 +43,18 @@ describe("parseNewMessages", () => {
 
     expect(result).not.toBeNull();
     expect(result!.messages).toHaveLength(2);
-    expect(result!.messages[0]).toEqual({ type: "user", content: "hello" });
-    expect(result!.messages[1]).toEqual({ type: "assistant", content: "hi" });
+    expect(result!.messages[0]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }),
+    );
+    expect(result!.messages[1]).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: [{ type: "text", text: "hi" }],
+      }),
+    );
   });
 
   it("returns null when lastLine >= total lines", () => {
@@ -68,7 +78,12 @@ describe("parseNewMessages", () => {
 
     expect(result).not.toBeNull();
     expect(result!.messages).toHaveLength(1);
-    expect(result!.messages[0]).toEqual({ type: "user", content: "bye" });
+    expect(result!.messages[0]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: [{ type: "text", text: "bye" }],
+      }),
+    );
   });
 
   it("returns null for empty file", () => {
@@ -89,8 +104,18 @@ describe("parseNewMessages", () => {
 
     expect(result).not.toBeNull();
     expect(result!.messages).toHaveLength(2);
-    expect(result!.messages[0]).toEqual({ type: "user", content: "hello" });
-    expect(result!.messages[1]).toEqual({ type: "assistant", content: "hi" });
+    expect(result!.messages[0]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }),
+    );
+    expect(result!.messages[1]).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: [{ type: "text", text: "hi" }],
+      }),
+    );
   });
 
   it("produces correct 1-based lineOffsets", () => {
@@ -129,6 +154,29 @@ describe("parseNewMessages", () => {
     const result = parseNewMessages(filePath, 1);
 
     expect(result).toBeNull();
+  });
+
+  it("filters out meta messages", () => {
+    const filePath = writeTranscript([
+      JSON.stringify({ type: "user", content: "hello", isMeta: true }),
+      JSON.stringify({ type: "user", content: "real question" }),
+      JSON.stringify({
+        message: { id: "m1", role: "assistant", content: "answer" },
+      }),
+    ]);
+
+    const result = parseNewMessages(filePath, 0);
+
+    expect(result).not.toBeNull();
+    expect(result!.messages).toHaveLength(2);
+    expect(result!.messages[0]).toEqual(
+      expect.objectContaining({ role: "user" }),
+    );
+    expect(result!.messages[1]).toEqual(
+      expect.objectContaining({ role: "assistant" }),
+    );
+    // lineOffsets skip the meta message (line 1)
+    expect(result!.lineOffsets).toEqual([2, 3]);
   });
 });
 

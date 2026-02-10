@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  getContent,
+  classifyMessage,
   getTimestamp,
   isToolResult,
   getToolCalls,
@@ -13,59 +13,231 @@ import {
   groupTurns,
   matchToolResults,
 } from "../src/parser.js";
-import type { Message, ToolUseBlock } from "../src/types.js";
+import type {
+  Message,
+  UserMessage,
+  AssistantMessage,
+  ToolUseBlock,
+} from "../src/types.js";
 
-describe("getContent", () => {
-  it("wraps string content from nested message as TextBlock array", () => {
-    const msg: Message = {
+describe("classifyMessage", () => {
+  it("classifies user message with string content", () => {
+    const msg = classifyMessage({ type: "user", content: "hello" });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }),
+    );
+  });
+
+  it("classifies user message with array content", () => {
+    const msg = classifyMessage({
+      type: "user",
+      content: [{ type: "text", text: "hello" }],
+    });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }),
+    );
+  });
+
+  it("classifies assistant message from nested message field", () => {
+    const msg = classifyMessage({
       message: { id: "m1", role: "assistant", content: "hello" },
-    };
-    expect(getContent(msg)).toEqual([{ type: "text", text: "hello" }]);
+    });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        id: "m1",
+        content: [{ type: "text", text: "hello" }],
+      }),
+    );
   });
 
-  it("wraps string content from flat message as TextBlock array", () => {
-    const msg: Message = { content: "hello" };
-    expect(getContent(msg)).toEqual([{ type: "text", text: "hello" }]);
+  it("classifies assistant message with array content", () => {
+    const msg = classifyMessage({
+      message: {
+        id: "m1",
+        role: "assistant",
+        model: "claude",
+        content: [{ type: "text", text: "hello" }],
+      },
+    });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "hello" }],
+      }),
+    );
   });
 
-  it("returns empty array for empty object", () => {
-    expect(getContent({})).toEqual([]);
+  it("classifies system message", () => {
+    const msg = classifyMessage({
+      type: "system",
+      subtype: "turn_duration",
+      durationMs: 1234,
+    });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "system",
+        subtype: "turn_duration",
+        durationMs: 1234,
+      }),
+    );
+  });
+
+  it("returns null for meta messages", () => {
+    expect(
+      classifyMessage({ type: "user", content: "hello", isMeta: true }),
+    ).toBeNull();
+  });
+
+  it("returns null for meta assistant messages", () => {
+    expect(
+      classifyMessage({
+        message: { id: "m1", role: "assistant", content: "hello" },
+        isMeta: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null for unrecognizable messages", () => {
+    expect(classifyMessage({})).toBeNull();
+  });
+
+  it("returns empty content for message with no content", () => {
+    const msg = classifyMessage({ type: "user" });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: [],
+      }),
+    );
+  });
+
+  it("preserves session metadata on user messages", () => {
+    const msg = classifyMessage({
+      type: "user",
+      content: "hello",
+      sessionId: "s1",
+      version: "1.0",
+      slug: "project",
+      cwd: "/home",
+      gitBranch: "main",
+    });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "user",
+        sessionId: "s1",
+        version: "1.0",
+        slug: "project",
+        cwd: "/home",
+        gitBranch: "main",
+      }),
+    );
+  });
+
+  it("preserves usage on assistant messages", () => {
+    const msg = classifyMessage({
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: "hi",
+        usage: { input_tokens: 100, output_tokens: 50 },
+      },
+    });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        usage: { input_tokens: 100, output_tokens: 50 },
+      }),
+    );
+  });
+
+  it("uses top-level timestamp for assistant messages", () => {
+    const msg = classifyMessage({
+      timestamp: "2025-01-15T10:00:00Z",
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: "hi",
+        timestamp: "2025-01-15T09:00:00Z",
+      },
+    });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        timestamp: "2025-01-15T10:00:00Z",
+      }),
+    );
+  });
+
+  it("falls back to nested timestamp for assistant messages", () => {
+    const msg = classifyMessage({
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: "hi",
+        timestamp: "2025-01-15T09:00:00Z",
+      },
+    });
+    expect(msg).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        timestamp: "2025-01-15T09:00:00Z",
+      }),
+    );
+  });
+
+  it("defaults model to 'unknown' when not provided", () => {
+    const msg = classifyMessage({
+      message: { id: "m1", role: "assistant", content: "hi" },
+    });
+    expect(msg).toEqual(
+      expect.objectContaining({ role: "assistant", model: "unknown" }),
+    );
   });
 });
 
 describe("isToolResult", () => {
   it("returns true when content contains tool_result items", () => {
-    const msg = {
+    const msg: UserMessage = {
+      role: "user",
       content: [{ type: "tool_result", tool_use_id: "123", content: "ok" }],
     };
     expect(isToolResult(msg)).toBe(true);
   });
 
   it("returns false when content has no tool_result items", () => {
-    const msg = { content: [{ type: "text", text: "hello" }] };
-    expect(isToolResult(msg)).toBe(false);
-  });
-
-  it("returns false when content is a string", () => {
-    const msg = { content: "hello" };
+    const msg: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+    };
     expect(isToolResult(msg)).toBe(false);
   });
 
   it("returns false for empty content", () => {
-    expect(isToolResult({})).toBe(false);
+    const msg: UserMessage = { role: "user", content: [] };
+    expect(isToolResult(msg)).toBe(false);
   });
 });
 
 describe("getToolCalls", () => {
   it("extracts tool_use blocks from content array", () => {
-    const msg = {
-      message: {
-        content: [
-          { type: "text", text: "thinking..." },
-          { type: "tool_use", id: "t1", name: "Read", input: { path: "/a" } },
-          { type: "tool_use", id: "t2", name: "Write", input: { path: "/b" } },
-        ],
-      },
+    const msg: AssistantMessage = {
+      role: "assistant",
+      id: "m1",
+      model: "claude",
+      content: [
+        { type: "text", text: "thinking..." },
+        { type: "tool_use", id: "t1", name: "Read", input: { path: "/a" } },
+        { type: "tool_use", id: "t2", name: "Write", input: { path: "/b" } },
+      ],
     };
     const calls = getToolCalls(msg);
     expect(calls).toHaveLength(2);
@@ -74,57 +246,75 @@ describe("getToolCalls", () => {
   });
 
   it("returns empty array when no tool_use blocks", () => {
-    const msg = { message: { content: [{ type: "text", text: "hello" }] } };
+    const msg: AssistantMessage = {
+      role: "assistant",
+      id: "m1",
+      model: "claude",
+      content: [{ type: "text", text: "hello" }],
+    };
     expect(getToolCalls(msg)).toEqual([]);
   });
 
-  it("returns empty array when content is a string", () => {
-    const msg = { message: { content: "hello" } };
+  it("returns empty array when content is empty", () => {
+    const msg: AssistantMessage = {
+      role: "assistant",
+      id: "m1",
+      model: "claude",
+      content: [],
+    };
     expect(getToolCalls(msg)).toEqual([]);
   });
 });
 
 describe("getTextContent", () => {
-  it("returns string content directly", () => {
-    const msg = { content: "hello world" };
-    expect(getTextContent(msg)).toBe("hello world");
-  });
-
   it("extracts text from content array", () => {
-    const msg = {
-      message: {
-        content: [
-          { type: "text", text: "line 1" },
-          { type: "tool_use", id: "t1", name: "Read", input: {} },
-          { type: "text", text: "line 2" },
-        ],
-      },
+    const msg: AssistantMessage = {
+      role: "assistant",
+      id: "m1",
+      model: "claude",
+      content: [
+        { type: "text", text: "line 1" },
+        { type: "tool_use", id: "t1", name: "Read", input: {} },
+        { type: "text", text: "line 2" },
+      ],
     };
     expect(getTextContent(msg)).toBe("line 1\nline 2");
   });
 
-  it("returns empty string for missing content", () => {
-    expect(getTextContent({})).toBe("");
+  it("returns empty string for empty content", () => {
+    const msg: UserMessage = { role: "user", content: [] };
+    expect(getTextContent(msg)).toBe("");
+  });
+
+  it("works with user messages", () => {
+    const msg: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: "hello world" }],
+    };
+    expect(getTextContent(msg)).toBe("hello world");
   });
 });
 
 describe("mergeAssistantParts", () => {
   it("merges multiple assistant message parts into one", () => {
-    const parts = [
-      { message: { id: "m1", content: [{ type: "text", text: "part1" }] } },
+    const parts: AssistantMessage[] = [
       {
-        message: {
-          id: "m1",
-          content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }],
-        },
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "part1" }],
+      },
+      {
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }],
       },
     ];
     const merged = mergeAssistantParts(parts);
-    const content = getContent(merged);
-    expect(Array.isArray(content)).toBe(true);
-    expect(content).toHaveLength(2);
-    expect(content[0]).toEqual({ type: "text", text: "part1" });
-    expect(content[1]).toEqual({
+    expect(merged.content).toHaveLength(2);
+    expect(merged.content[0]).toEqual({ type: "text", text: "part1" });
+    expect(merged.content[1]).toEqual({
       type: "tool_use",
       id: "t1",
       name: "Read",
@@ -133,47 +323,62 @@ describe("mergeAssistantParts", () => {
   });
 
   it("uses usage from the last part", () => {
-    const parts: Message[] = [
+    const parts: AssistantMessage[] = [
       {
-        message: {
-          id: "m1",
-          role: "assistant",
-          content: [{ type: "text", text: "part1" }],
-          usage: { input_tokens: 100, output_tokens: 10 },
-        },
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "part1" }],
+        usage: { input_tokens: 100, output_tokens: 10 },
       },
       {
-        message: {
-          id: "m1",
-          role: "assistant",
-          content: [{ type: "text", text: "part2" }],
-          usage: { input_tokens: 100, output_tokens: 50 },
-        },
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "part2" }],
+        usage: { input_tokens: 100, output_tokens: 50 },
       },
     ];
     const merged = mergeAssistantParts(parts);
-    expect(merged.message?.usage).toEqual({
+    expect(merged.usage).toEqual({
       input_tokens: 100,
       output_tokens: 50,
     });
   });
 
-  it("wraps non-array content as text", () => {
-    const parts = [{ content: "hello" }, { content: "world" }];
+  it("falls back to first part usage when last part has none", () => {
+    const parts: AssistantMessage[] = [
+      {
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "part1" }],
+        usage: { input_tokens: 100, output_tokens: 10 },
+      },
+      {
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "part2" }],
+      },
+    ];
     const merged = mergeAssistantParts(parts);
-    expect(getContent(merged)).toEqual([
-      { type: "text", text: "hello" },
-      { type: "text", text: "world" },
-    ]);
+    expect(merged.usage).toEqual({
+      input_tokens: 100,
+      output_tokens: 10,
+    });
   });
 });
 
 describe("groupTurns", () => {
   it("groups a simple user-assistant exchange", () => {
-    const messages = [
-      { type: "user", content: "hi" },
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
       {
-        message: { id: "m1", role: "assistant", content: "hello" },
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "hello" }],
       },
     ];
     const { turns } = groupTurns(messages);
@@ -184,29 +389,27 @@ describe("groupTurns", () => {
   });
 
   it("groups tool results with the current turn", () => {
-    const messages = [
-      { type: "user", content: "read file" },
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "read file" }] },
       {
-        message: {
-          id: "m1",
-          role: "assistant",
-          content: [
-            { type: "tool_use", id: "t1", name: "Read", input: { path: "/" } },
-          ],
-        },
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [
+          { type: "tool_use", id: "t1", name: "Read", input: { path: "/" } },
+        ],
       },
       {
-        type: "user",
+        role: "user",
         content: [
           { type: "tool_result", tool_use_id: "t1", content: "file data" },
         ],
       },
       {
-        message: {
-          id: "m2",
-          role: "assistant",
-          content: [{ type: "text", text: "done" }],
-        },
+        role: "assistant",
+        id: "m2",
+        model: "claude",
+        content: [{ type: "text", text: "done" }],
       },
     ];
     const { turns } = groupTurns(messages);
@@ -216,11 +419,21 @@ describe("groupTurns", () => {
   });
 
   it("creates a new turn on a new user message", () => {
-    const messages = [
-      { type: "user", content: "first" },
-      { message: { id: "m1", role: "assistant", content: "reply1" } },
-      { type: "user", content: "second" },
-      { message: { id: "m2", role: "assistant", content: "reply2" } },
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "first" }] },
+      {
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "reply1" }],
+      },
+      { role: "user", content: [{ type: "text", text: "second" }] },
+      {
+        role: "assistant",
+        id: "m2",
+        model: "claude",
+        content: [{ type: "text", text: "reply2" }],
+      },
     ];
     const { turns } = groupTurns(messages);
     expect(turns).toHaveLength(2);
@@ -229,30 +442,26 @@ describe("groupTurns", () => {
   });
 
   it("merges assistant parts with the same message ID", () => {
-    const messages = [
-      { type: "user", content: "hi" },
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
       {
-        message: {
-          id: "m1",
-          role: "assistant",
-          content: [{ type: "text", text: "part1" }],
-        },
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "part1" }],
       },
       {
-        message: {
-          id: "m1",
-          role: "assistant",
-          content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }],
-        },
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }],
       },
     ];
     const { turns } = groupTurns(messages);
     expect(turns).toHaveLength(1);
     expect(turns[0].assistants).toHaveLength(1);
     const merged = turns[0].assistants[0];
-    const content = getContent(merged);
-    expect(Array.isArray(content)).toBe(true);
-    expect(content).toHaveLength(2);
+    expect(merged.content).toHaveLength(2);
   });
 
   it("returns empty result for no messages", () => {
@@ -262,51 +471,27 @@ describe("groupTurns", () => {
   });
 
   it("returns no turns for only user message without assistant", () => {
-    const messages = [{ type: "user", content: "hi" }];
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ];
     const { turns, consumed } = groupTurns(messages);
     expect(turns).toEqual([]);
     expect(consumed).toBe(0);
   });
 
-  it("skips isMeta user messages and uses the real user message", () => {
-    const messages = [
-      { type: "user", content: "skill rubric scaffolding...", isMeta: true },
-      { type: "user", content: "real user question" },
-      {
-        message: { id: "m1", role: "assistant", content: "answer" },
-      },
-    ];
-    const { turns } = groupTurns(messages);
-    expect(turns).toHaveLength(1);
-    expect(getTextContent(turns[0].user)).toBe("real user question");
-  });
-
-  it("skips isMeta assistant messages", () => {
-    const messages = [
-      { type: "user", content: "hello" },
-      {
-        message: { id: "m1", role: "assistant", content: "meta response" },
-        isMeta: true,
-      },
-      {
-        message: {
-          id: "m2",
-          role: "assistant",
-          content: [{ type: "text", text: "real response" }],
-        },
-      },
-    ];
-    const { turns } = groupTurns(messages);
-    expect(turns).toHaveLength(1);
-    expect(turns[0].assistants).toHaveLength(1);
-    expect(getTextContent(turns[0].assistants[0])).toBe("real response");
-  });
-
   it("reports consumed count for complete turns only", () => {
-    const messages = [
-      { type: "user", content: "first" },
-      { message: { id: "m1", role: "assistant", content: "reply1" } },
-      { type: "user", content: "second (incomplete)" },
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "first" }] },
+      {
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "reply1" }],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "second (incomplete)" }],
+      },
     ];
     const { turns, consumed } = groupTurns(messages);
     expect(turns).toHaveLength(1);
@@ -314,11 +499,21 @@ describe("groupTurns", () => {
   });
 
   it("consumes all messages when all turns complete", () => {
-    const messages = [
-      { type: "user", content: "first" },
-      { message: { id: "m1", role: "assistant", content: "reply1" } },
-      { type: "user", content: "second" },
-      { message: { id: "m2", role: "assistant", content: "reply2" } },
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "first" }] },
+      {
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "reply1" }],
+      },
+      { role: "user", content: [{ type: "text", text: "second" }] },
+      {
+        role: "assistant",
+        id: "m2",
+        model: "claude",
+        content: [{ type: "text", text: "reply2" }],
+      },
     ];
     const { turns, consumed } = groupTurns(messages);
     expect(turns).toHaveLength(2);
@@ -326,18 +521,23 @@ describe("groupTurns", () => {
   });
 
   it("returns consumed 0 when no complete turns", () => {
-    const messages = [{ type: "user", content: "hi" }];
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ];
     const { consumed } = groupTurns(messages);
     expect(consumed).toBe(0);
   });
 
   it("captures durationMs from system turn_duration message", () => {
     const messages: Message[] = [
-      { type: "user", content: "hello" },
+      { role: "user", content: [{ type: "text", text: "hello" }] },
       {
-        message: { id: "m1", role: "assistant", content: "hi" },
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "hi" }],
       },
-      { type: "system", subtype: "turn_duration", durationMs: 1234 },
+      { role: "system", subtype: "turn_duration", durationMs: 1234 },
     ];
     const { turns } = groupTurns(messages);
     expect(turns).toHaveLength(1);
@@ -346,12 +546,22 @@ describe("groupTurns", () => {
 
   it("attaches durationMs to correct turn when multiple turns exist", () => {
     const messages: Message[] = [
-      { type: "user", content: "first" },
-      { message: { id: "m1", role: "assistant", content: "reply1" } },
-      { type: "system", subtype: "turn_duration", durationMs: 500 },
-      { type: "user", content: "second" },
-      { message: { id: "m2", role: "assistant", content: "reply2" } },
-      { type: "system", subtype: "turn_duration", durationMs: 800 },
+      { role: "user", content: [{ type: "text", text: "first" }] },
+      {
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "reply1" }],
+      },
+      { role: "system", subtype: "turn_duration", durationMs: 500 },
+      { role: "user", content: [{ type: "text", text: "second" }] },
+      {
+        role: "assistant",
+        id: "m2",
+        model: "claude",
+        content: [{ type: "text", text: "reply2" }],
+      },
+      { role: "system", subtype: "turn_duration", durationMs: 800 },
     ];
     const { turns } = groupTurns(messages);
     expect(turns).toHaveLength(2);
@@ -361,9 +571,12 @@ describe("groupTurns", () => {
 
   it("leaves durationMs undefined when no turn_duration message", () => {
     const messages: Message[] = [
-      { type: "user", content: "hello" },
+      { role: "user", content: [{ type: "text", text: "hello" }] },
       {
-        message: { id: "m1", role: "assistant", content: "hi" },
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "hi" }],
       },
     ];
     const { turns } = groupTurns(messages);
@@ -373,10 +586,15 @@ describe("groupTurns", () => {
 
   it("consumes system turn_duration messages in consumed count", () => {
     const messages: Message[] = [
-      { type: "user", content: "hello" },
-      { message: { id: "m1", role: "assistant", content: "hi" } },
-      { type: "system", subtype: "turn_duration", durationMs: 1234 },
-      { type: "user", content: "incomplete" },
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+      {
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "hi" }],
+      },
+      { role: "system", subtype: "turn_duration", durationMs: 1234 },
+      { role: "user", content: [{ type: "text", text: "incomplete" }] },
     ];
     const { turns, consumed } = groupTurns(messages);
     expect(turns).toHaveLength(1);
@@ -384,19 +602,18 @@ describe("groupTurns", () => {
   });
 
   it("does not produce turns when messages start with tool_result", () => {
-    const messages = [
+    const messages: Message[] = [
       {
-        type: "user",
+        role: "user",
         content: [
           { type: "tool_result", tool_use_id: "t1", content: "file data" },
         ],
       },
       {
-        message: {
-          id: "m1",
-          role: "assistant",
-          content: [{ type: "text", text: "continuing" }],
-        },
+        role: "assistant",
+        id: "m1",
+        model: "claude",
+        content: [{ type: "text", text: "continuing" }],
       },
     ];
     const { turns, consumed } = groupTurns(messages);
@@ -406,19 +623,24 @@ describe("groupTurns", () => {
 });
 
 describe("getTimestamp", () => {
-  it("should return Date from top-level timestamp field", () => {
-    const msg = { timestamp: "2025-01-15T10:30:00Z", type: "user" };
+  it("should return Date from timestamp field", () => {
+    const msg: UserMessage = {
+      role: "user",
+      content: [],
+      timestamp: "2025-01-15T10:30:00Z",
+    };
     const result = getTimestamp(msg);
     expect(result).toBeInstanceOf(Date);
     expect(result!.toISOString()).toBe("2025-01-15T10:30:00.000Z");
   });
 
-  it("should return Date from nested message.timestamp field", () => {
-    const msg = {
-      message: {
-        role: "assistant",
-        timestamp: "2025-01-15T10:31:00Z",
-      },
+  it("should return Date from assistant message timestamp", () => {
+    const msg: AssistantMessage = {
+      role: "assistant",
+      id: "m1",
+      model: "claude",
+      content: [],
+      timestamp: "2025-01-15T10:31:00Z",
     };
     const result = getTimestamp(msg);
     expect(result).toBeInstanceOf(Date);
@@ -426,29 +648,26 @@ describe("getTimestamp", () => {
   });
 
   it("should return undefined when no timestamp field exists", () => {
-    const msg = { type: "user", content: "hello" };
-    expect(getTimestamp(msg)).toBeUndefined();
-  });
-
-  it("should return undefined for non-string timestamp", () => {
-    const msg = { timestamp: 12345 };
+    const msg: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+    };
     expect(getTimestamp(msg)).toBeUndefined();
   });
 });
 
 describe("getUsage", () => {
   it("extracts cache_creation_input_tokens", () => {
-    const msg: Message = {
-      message: {
-        id: "m1",
-        role: "assistant",
-        content: "hello",
-        usage: {
-          input_tokens: 100,
-          output_tokens: 50,
-          cache_read_input_tokens: 80,
-          cache_creation_input_tokens: 20,
-        },
+    const msg: AssistantMessage = {
+      role: "assistant",
+      id: "m1",
+      model: "claude",
+      content: [{ type: "text", text: "hello" }],
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_read_input_tokens: 80,
+        cache_creation_input_tokens: 20,
       },
     };
     const usage = getUsage(msg);
@@ -462,13 +681,12 @@ describe("getUsage", () => {
   });
 
   it("omits cache_creation_input_tokens when not present", () => {
-    const msg: Message = {
-      message: {
-        id: "m1",
-        role: "assistant",
-        content: "hello",
-        usage: { input_tokens: 100, output_tokens: 50 },
-      },
+    const msg: AssistantMessage = {
+      role: "assistant",
+      id: "m1",
+      model: "claude",
+      content: [{ type: "text", text: "hello" }],
+      usage: { input_tokens: 100, output_tokens: 50 },
     };
     const usage = getUsage(msg);
     expect(usage).toEqual({
@@ -480,10 +698,10 @@ describe("getUsage", () => {
 });
 
 describe("getSessionMetadata", () => {
-  it("extracts metadata fields from a message", () => {
-    const msg: Message = {
-      type: "user",
-      content: "hello",
+  it("extracts metadata fields from a user message", () => {
+    const msg: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
       version: "1.0.32",
       slug: "my-project",
       cwd: "/home/user/project",
@@ -499,9 +717,9 @@ describe("getSessionMetadata", () => {
   });
 
   it("returns partial metadata when some fields are missing", () => {
-    const msg: Message = {
-      type: "user",
-      content: "hello",
+    const msg: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
       version: "1.0.32",
     };
     const metadata = getSessionMetadata(msg);
@@ -509,9 +727,9 @@ describe("getSessionMetadata", () => {
   });
 
   it("returns undefined when no metadata fields are present", () => {
-    const msg: Message = {
-      type: "user",
-      content: "hello",
+    const msg: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
     };
     expect(getSessionMetadata(msg)).toBeUndefined();
   });
@@ -523,9 +741,9 @@ describe("matchToolResults", () => {
       { type: "tool_use", id: "t1", name: "Read", input: { path: "/a" } },
       { type: "tool_use", id: "t2", name: "Write", input: { path: "/b" } },
     ];
-    const toolResults = [
+    const toolResults: UserMessage[] = [
       {
-        type: "user",
+        role: "user",
         content: [
           { type: "tool_result", tool_use_id: "t1", content: "file data" },
           { type: "tool_result", tool_use_id: "t2", content: "ok" },
@@ -567,9 +785,9 @@ describe("matchToolResults", () => {
     const toolUseBlocks: ToolUseBlock[] = [
       { type: "tool_use", id: "t1", name: "Read", input: { path: "/a" } },
     ];
-    const toolResults = [
+    const toolResults: UserMessage[] = [
       {
-        type: "user",
+        role: "user",
         timestamp: "2025-01-15T10:32:00Z",
         content: [
           { type: "tool_result", tool_use_id: "t1", content: "file data" },
@@ -586,9 +804,9 @@ describe("matchToolResults", () => {
     const toolUseBlocks: ToolUseBlock[] = [
       { type: "tool_use", id: "t1", name: "Read", input: {} },
     ];
-    const toolResults = [
+    const toolResults: UserMessage[] = [
       {
-        type: "user",
+        role: "user",
         content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
       },
     ];
@@ -606,9 +824,9 @@ describe("matchToolResults", () => {
         input: { command: "exit 1" },
       },
     ];
-    const toolResults = [
+    const toolResults: UserMessage[] = [
       {
-        type: "user",
+        role: "user",
         content: [
           {
             type: "tool_result",
@@ -628,9 +846,9 @@ describe("matchToolResults", () => {
     const toolUseBlocks: ToolUseBlock[] = [
       { type: "tool_use", id: "t1", name: "Read", input: { path: "/a" } },
     ];
-    const toolResults = [
+    const toolResults: UserMessage[] = [
       {
-        type: "user",
+        role: "user",
         content: [
           {
             type: "tool_result",

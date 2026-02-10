@@ -8,19 +8,27 @@ import {
   getUsage,
 } from "./content.js";
 import { matchToolResults } from "./parser.js";
-import type { Turn, Message, SessionMetadata } from "./types.js";
+import type {
+  Turn,
+  ToolCall,
+  UserMessage,
+  AssistantMessage,
+  SessionMetadata,
+} from "./types.js";
 
 interface GenerationContext {
   parentObservation: LangfuseObservation;
-  assistant: Message;
+  assistant: AssistantMessage;
   index: number;
-  toolResults: Message[];
+  toolResults: UserMessage[];
   model: string;
   userText: string;
   genEnd: Date | undefined;
 }
 
-function computeTraceEnd(messages: Message[]): Date | undefined {
+function computeTraceEnd(
+  messages: (AssistantMessage | UserMessage)[],
+): Date | undefined {
   return messages.reduce<Date | undefined>((latest, msg) => {
     const ts = getTimestamp(msg);
     if (!ts) return latest;
@@ -44,7 +52,7 @@ function childObservationOptions(
 
 function createToolObservations(
   parentObservation: LangfuseObservation,
-  toolCalls: ReturnType<typeof matchToolResults>,
+  toolCalls: ToolCall[],
   genStart: Date | undefined,
 ): void {
   let nextStart = genStart;
@@ -85,7 +93,7 @@ function createGenerationObservation(ctx: GenerationContext): void {
     genEnd,
   } = ctx;
   const assistantText = getTextContent(assistant);
-  const assistantModel = assistant.message?.model ?? model;
+  const assistantModel = assistant.model ?? model;
   const toolUseBlocks = getToolCalls(assistant);
   const toolCalls = matchToolResults(toolUseBlocks, toolResults);
 
@@ -119,7 +127,7 @@ function computeTraceContext(turn: Turn) {
   const lastAssistantText = getTextContent(
     turn.assistants[turn.assistants.length - 1],
   );
-  const model = turn.assistants[0]?.message?.model ?? "claude";
+  const model = turn.assistants[0]?.model ?? "claude";
   const traceStart = getTimestamp(turn.user);
   const traceEnd =
     traceStart && turn.durationMs !== undefined

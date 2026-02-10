@@ -1,6 +1,8 @@
 import type {
   ContentBlock,
   Message,
+  UserMessage,
+  AssistantMessage,
   ToolUseBlock,
   ToolResultBlock,
   ToolCall,
@@ -8,38 +10,26 @@ import type {
   GroupTurnsResult,
 } from "./types.js";
 
-import {
-  getContent,
-  getTimestamp,
-  isToolResult,
-  isToolResultBlock,
-} from "./content.js";
+import { getTimestamp, isToolResult, isToolResultBlock } from "./content.js";
 
-export function mergeAssistantParts(parts: Message[]): Message {
-  const mergedContent: ContentBlock[] = [];
-  for (const part of parts) {
-    mergedContent.push(...getContent(part));
-  }
-
-  const result = { ...parts[0] };
-  if (result.message) {
-    result.message = { ...result.message, content: mergedContent };
-    const lastPart = parts[parts.length - 1];
-    if (lastPart.message?.usage) {
-      result.message.usage = lastPart.message.usage;
-    }
-  } else {
-    result.content = mergedContent;
-  }
-  return result;
+export function mergeAssistantParts(
+  parts: AssistantMessage[],
+): AssistantMessage {
+  const mergedContent: ContentBlock[] = parts.flatMap((p) => p.content);
+  const lastPart = parts[parts.length - 1];
+  return {
+    ...parts[0],
+    content: mergedContent,
+    usage: lastPart.usage ?? parts[0].usage,
+  };
 }
 
 class AssistantPartAccumulator {
-  private parts: Message[] = [];
+  private parts: AssistantMessage[] = [];
   private msgId: string | null = null;
 
-  add(msg: Message): Message | undefined {
-    const id: string | undefined = msg.message?.id;
+  add(msg: AssistantMessage): AssistantMessage | undefined {
+    const id = msg.id;
 
     if (!id || id === this.msgId) {
       this.parts.push(msg);
@@ -52,7 +42,7 @@ class AssistantPartAccumulator {
     return flushed;
   }
 
-  flush(): Message | undefined {
+  flush(): AssistantMessage | undefined {
     if (this.msgId === null || this.parts.length === 0) return undefined;
     const merged = mergeAssistantParts(this.parts);
     this.parts = [];
@@ -63,32 +53,27 @@ class AssistantPartAccumulator {
 
 class TurnBuilder {
   private turns: Turn[] = [];
-  private currentUser: Message | null = null;
-  private currentAssistants: Message[] = [];
+  private currentUser: UserMessage | null = null;
+  private currentAssistants: AssistantMessage[] = [];
   private accumulator = new AssistantPartAccumulator();
-  private currentToolResults: Message[] = [];
+  private currentToolResults: UserMessage[] = [];
   private lastCompleteTurnEnd = 0;
   private pendingDurationMs: number | undefined = undefined;
 
   build(messages: Message[]): GroupTurnsResult {
     let idx = 0;
     for (const msg of messages) {
-      if (msg.isMeta === true) {
+      if (msg.role === "system") {
+        if (msg.subtype === "turn_duration") {
+          this.pendingDurationMs = msg.durationMs;
+        }
         idx++;
         continue;
       }
 
-      if (msg.type === "system" && msg.subtype === "turn_duration") {
-        this.pendingDurationMs = msg.durationMs;
-        idx++;
-        continue;
-      }
-
-      const role = msg.type ?? msg.message?.role;
-
-      if (role === "user") {
+      if (msg.role === "user") {
         this.handleUser(msg, idx);
-      } else if (role === "assistant") {
+      } else if (msg.role === "assistant") {
         this.handleAssistant(msg);
       }
 
@@ -99,7 +84,7 @@ class TurnBuilder {
     return { turns: this.turns, consumed: this.lastCompleteTurnEnd };
   }
 
-  private handleUser(msg: Message, idx: number): void {
+  private handleUser(msg: UserMessage, idx: number): void {
     if (isToolResult(msg)) {
       this.currentToolResults.push(msg);
       return;
@@ -113,7 +98,7 @@ class TurnBuilder {
     this.currentToolResults = [];
   }
 
-  private handleAssistant(msg: Message): void {
+  private handleAssistant(msg: AssistantMessage): void {
     const merged = this.accumulator.add(msg);
     if (merged) this.currentAssistants.push(merged);
   }
@@ -140,11 +125,11 @@ export function groupTurns(messages: Message[]): GroupTurnsResult {
 }
 
 function findToolResultBlock(
-  toolResults: Message[],
+  toolResults: UserMessage[],
   toolUseId: string,
-): { block: ToolResultBlock; message: Message } | undefined {
+): { block: ToolResultBlock; message: UserMessage } | undefined {
   for (const msg of toolResults) {
-    const block = getContent(msg).find(
+    const block = msg.content.find(
       (item): item is ToolResultBlock =>
         isToolResultBlock(item) && item.tool_use_id === toolUseId,
     );
@@ -155,7 +140,7 @@ function findToolResultBlock(
 
 export function matchToolResults(
   toolUseBlocks: ToolUseBlock[],
-  toolResults: Message[],
+  toolResults: UserMessage[],
 ): ToolCall[] {
   return toolUseBlocks.map((block) => {
     const match = findToolResultBlock(toolResults, block.id);

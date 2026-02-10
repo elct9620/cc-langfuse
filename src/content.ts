@@ -1,11 +1,16 @@
 import type {
   ContentBlock,
+  RawMessage,
   Message,
+  UserMessage,
+  AssistantMessage,
   SessionMetadata,
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
 } from "./types.js";
+
+// --- Content block type guards ---
 
 function isBlockOfType<T extends ContentBlock>(
   item: unknown,
@@ -31,33 +36,76 @@ export function isToolResultBlock(item: unknown): item is ToolResultBlock {
   return isBlockOfType<ToolResultBlock>(item, "tool_result");
 }
 
-export function getTimestamp(msg: Message): Date | undefined {
-  const ts = msg.timestamp ?? msg.message?.timestamp;
-  if (typeof ts === "string") return new Date(ts);
-  return undefined;
-}
+// --- Message classification ---
 
-export function getContent(msg: Message): ContentBlock[] {
-  const raw =
-    msg.message && typeof msg.message === "object"
-      ? msg.message.content
-      : msg.content;
+function normalizeContent(
+  raw: ContentBlock[] | string | undefined,
+): ContentBlock[] {
   if (Array.isArray(raw)) return raw;
   if (typeof raw === "string") return [{ type: "text", text: raw }];
   return [];
 }
 
-export function isToolResult(msg: Message): boolean {
-  return getContent(msg).some(isToolResultBlock);
+export function classifyMessage(raw: RawMessage): Message | null {
+  if (raw.isMeta) return null;
+
+  if (raw.type === "system") {
+    return {
+      role: "system",
+      subtype: raw.subtype,
+      durationMs: raw.durationMs,
+      timestamp: raw.timestamp,
+    };
+  }
+
+  const role = raw.type ?? raw.message?.role;
+
+  if (role === "assistant") {
+    const body = raw.message;
+    return {
+      role: "assistant",
+      id: body?.id ?? "",
+      model: body?.model ?? "unknown",
+      content: normalizeContent(body?.content ?? raw.content),
+      usage: body?.usage,
+      timestamp: raw.timestamp ?? body?.timestamp,
+    };
+  }
+
+  if (role === "user") {
+    return {
+      role: "user",
+      content: normalizeContent(raw.content),
+      timestamp: raw.timestamp,
+      sessionId: raw.sessionId,
+      version: raw.version,
+      slug: raw.slug,
+      cwd: raw.cwd,
+      gitBranch: raw.gitBranch,
+    };
+  }
+
+  return null;
 }
 
-export function getToolCalls(msg: Message): ToolUseBlock[] {
-  return getContent(msg).filter(isToolUseBlock);
+// --- Message accessors ---
+
+export function getTimestamp(msg: Message): Date | undefined {
+  if (msg.timestamp) return new Date(msg.timestamp);
+  return undefined;
 }
 
-export function getTextContent(msg: Message): string {
+export function isToolResult(msg: UserMessage): boolean {
+  return msg.content.some(isToolResultBlock);
+}
+
+export function getToolCalls(msg: AssistantMessage): ToolUseBlock[] {
+  return msg.content.filter(isToolUseBlock);
+}
+
+export function getTextContent(msg: UserMessage | AssistantMessage): string {
   const parts: string[] = [];
-  for (const item of getContent(msg)) {
+  for (const item of msg.content) {
     if (isTextBlock(item)) {
       parts.push(item.text);
     }
@@ -65,7 +113,9 @@ export function getTextContent(msg: Message): string {
   return parts.join("\n");
 }
 
-export function getSessionMetadata(msg: Message): SessionMetadata | undefined {
+export function getSessionMetadata(
+  msg: UserMessage,
+): SessionMetadata | undefined {
   const metadata: SessionMetadata = {};
   if (msg.version) metadata.version = msg.version;
   if (msg.slug) metadata.slug = msg.slug;
@@ -74,8 +124,10 @@ export function getSessionMetadata(msg: Message): SessionMetadata | undefined {
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
-export function getUsage(msg: Message): Record<string, number> | undefined {
-  const usage = msg.message?.usage;
+export function getUsage(
+  msg: AssistantMessage,
+): Record<string, number> | undefined {
+  const usage = msg.usage;
   if (!usage) return undefined;
 
   const inputTokens =
