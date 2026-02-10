@@ -26,8 +26,10 @@ function isValidState(data: unknown): data is State {
     if (
       typeof v !== "object" ||
       v === null ||
-      typeof (v as SessionState).last_line !== "number" ||
-      typeof (v as SessionState).turn_count !== "number"
+      !("last_line" in v) ||
+      typeof v.last_line !== "number" ||
+      !("turn_count" in v) ||
+      typeof v.turn_count !== "number"
     )
       return false;
   }

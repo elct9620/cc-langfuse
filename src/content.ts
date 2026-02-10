@@ -14,7 +14,8 @@ function isBlockOfType<T extends ContentBlock>(
   return (
     typeof item === "object" &&
     item !== null &&
-    (item as Record<string, unknown>).type === type
+    "type" in item &&
+    item.type === type
   );
 }
 
@@ -36,34 +37,27 @@ export function getTimestamp(msg: Message): Date | undefined {
   return undefined;
 }
 
-export function getContent(msg: Message): ContentBlock[] | string | undefined {
+export function getContent(msg: Message): ContentBlock[] {
   const raw =
     msg.message && typeof msg.message === "object"
       ? msg.message.content
       : msg.content;
   if (Array.isArray(raw)) return raw;
-  if (typeof raw === "string") return raw;
-  return undefined;
+  if (typeof raw === "string") return [{ type: "text", text: raw }];
+  return [];
 }
 
 export function isToolResult(msg: Message): boolean {
-  const content = getContent(msg);
-  if (!Array.isArray(content)) return false;
-  return content.some(isToolResultBlock);
+  return getContent(msg).some(isToolResultBlock);
 }
 
 export function getToolCalls(msg: Message): ToolUseBlock[] {
-  const content = getContent(msg);
-  if (!Array.isArray(content)) return [];
-  return content.filter(isToolUseBlock);
+  return getContent(msg).filter(isToolUseBlock);
 }
 
 export function getTextContent(msg: Message): string {
-  const content = getContent(msg);
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
   const parts: string[] = [];
-  for (const item of content) {
+  for (const item of getContent(msg)) {
     if (isTextBlock(item)) {
       parts.push(item.text);
     }

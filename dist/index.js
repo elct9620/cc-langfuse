@@ -25,7 +25,7 @@ function debug(message) {
 const STATE_FILE = join(homedir(), ".claude", "state", "cc-langfuse_state.json");
 function isValidState(data) {
 	if (typeof data !== "object" || data === null || Array.isArray(data)) return false;
-	for (const v of Object.values(data)) if (typeof v !== "object" || v === null || typeof v.last_line !== "number" || typeof v.turn_count !== "number") return false;
+	for (const v of Object.values(data)) if (typeof v !== "object" || v === null || !("last_line" in v) || typeof v.last_line !== "number" || !("turn_count" in v) || typeof v.turn_count !== "number") return false;
 	return true;
 }
 /**
@@ -98,7 +98,7 @@ function parseNewMessages(transcriptFile, lastLine) {
 //#endregion
 //#region src/content.ts
 function isBlockOfType(item, type) {
-	return typeof item === "object" && item !== null && item.type === type;
+	return typeof item === "object" && item !== null && "type" in item && item.type === type;
 }
 function isTextBlock(item) {
 	return isBlockOfType(item, "text");
@@ -116,24 +116,21 @@ function getTimestamp(msg) {
 function getContent(msg) {
 	const raw = msg.message && typeof msg.message === "object" ? msg.message.content : msg.content;
 	if (Array.isArray(raw)) return raw;
-	if (typeof raw === "string") return raw;
+	if (typeof raw === "string") return [{
+		type: "text",
+		text: raw
+	}];
+	return [];
 }
 function isToolResult(msg) {
-	const content = getContent(msg);
-	if (!Array.isArray(content)) return false;
-	return content.some(isToolResultBlock);
+	return getContent(msg).some(isToolResultBlock);
 }
 function getToolCalls(msg) {
-	const content = getContent(msg);
-	if (!Array.isArray(content)) return [];
-	return content.filter(isToolUseBlock);
+	return getContent(msg).filter(isToolUseBlock);
 }
 function getTextContent(msg) {
-	const content = getContent(msg);
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
 	const parts = [];
-	for (const item of content) if (isTextBlock(item)) parts.push(item.text);
+	for (const item of getContent(msg)) if (isTextBlock(item)) parts.push(item.text);
 	return parts.join("\n");
 }
 function getSessionMetadata(msg) {
@@ -162,14 +159,7 @@ function getUsage(msg) {
 //#region src/parser.ts
 function mergeAssistantParts(parts) {
 	const mergedContent = [];
-	for (const part of parts) {
-		const content = getContent(part);
-		if (Array.isArray(content)) mergedContent.push(...content);
-		else if (content !== void 0) mergedContent.push({
-			type: "text",
-			text: String(content)
-		});
-	}
+	for (const part of parts) mergedContent.push(...getContent(part));
 	const result = { ...parts[0] };
 	if (result.message) {
 		result.message = {
@@ -269,9 +259,7 @@ function groupTurns(messages) {
 }
 function findToolResultBlock(toolResults, toolUseId) {
 	for (const msg of toolResults) {
-		const content = getContent(msg);
-		if (!Array.isArray(content)) continue;
-		const block = content.find((item) => isToolResultBlock(item) && item.tool_use_id === toolUseId);
+		const block = getContent(msg).find((item) => isToolResultBlock(item) && item.tool_use_id === toolUseId);
 		if (block) return {
 			block,
 			message: msg

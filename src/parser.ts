@@ -18,12 +18,7 @@ import {
 export function mergeAssistantParts(parts: Message[]): Message {
   const mergedContent: ContentBlock[] = [];
   for (const part of parts) {
-    const content = getContent(part);
-    if (Array.isArray(content)) {
-      mergedContent.push(...content);
-    } else if (content !== undefined) {
-      mergedContent.push({ type: "text", text: String(content) });
-    }
+    mergedContent.push(...getContent(part));
   }
 
   const result = { ...parts[0] };
@@ -149,9 +144,7 @@ function findToolResultBlock(
   toolUseId: string,
 ): { block: ToolResultBlock; message: Message } | undefined {
   for (const msg of toolResults) {
-    const content = getContent(msg);
-    if (!Array.isArray(content)) continue;
-    const block = content.find(
+    const block = getContent(msg).find(
       (item): item is ToolResultBlock =>
         isToolResultBlock(item) && item.tool_use_id === toolUseId,
     );

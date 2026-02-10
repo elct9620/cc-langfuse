@@ -16,20 +16,20 @@ import {
 import type { Message, ToolUseBlock } from "../src/types.js";
 
 describe("getContent", () => {
-  it("extracts content from a message with nested message field", () => {
+  it("wraps string content from nested message as TextBlock array", () => {
     const msg: Message = {
       message: { id: "m1", role: "assistant", content: "hello" },
     };
-    expect(getContent(msg)).toBe("hello");
+    expect(getContent(msg)).toEqual([{ type: "text", text: "hello" }]);
   });
 
-  it("extracts content from a flat message", () => {
+  it("wraps string content from flat message as TextBlock array", () => {
     const msg: Message = { content: "hello" };
-    expect(getContent(msg)).toBe("hello");
+    expect(getContent(msg)).toEqual([{ type: "text", text: "hello" }]);
   });
 
-  it("returns undefined for empty object", () => {
-    expect(getContent({})).toBeUndefined();
+  it("returns empty array for empty object", () => {
+    expect(getContent({})).toEqual([]);
   });
 });
 
