@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/elct9620/cc-langfuse/compare/v0.2.0...v0.2.1) (2026-02-10)
+
+
+### Bug Fixes
+
+* **content:** read tool result content from message.content in user messages ([0a051bf](https://github.com/elct9620/cc-langfuse/commit/0a051bf76f5ed61544272591bd41913f43c7f958))
+
 ## [0.2.0](https://github.com/elct9620/cc-langfuse/compare/v0.1.2...v0.2.0) (2026-02-10)
 
 
