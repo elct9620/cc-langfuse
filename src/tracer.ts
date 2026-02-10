@@ -8,7 +8,7 @@ import {
   getUsage,
 } from "./content.js";
 import { matchToolResults } from "./parser.js";
-import type { Turn, Message } from "./types.js";
+import type { Turn, Message, SessionMetadata } from "./types.js";
 
 interface GenerationContext {
   parentObservation: LangfuseObservation;
@@ -114,7 +114,10 @@ function computeTraceContext(turn: Turn) {
   );
   const model = turn.assistants[0]?.message?.model ?? "claude";
   const traceStart = getTimestamp(turn.user);
-  const traceEnd = computeTraceEnd([...turn.assistants, ...turn.toolResults]);
+  const traceEnd =
+    traceStart && turn.durationMs !== undefined
+      ? new Date(traceStart.getTime() + turn.durationMs)
+      : computeTraceEnd([...turn.assistants, ...turn.toolResults]);
 
   return { userText, lastAssistantText, model, traceStart, traceEnd };
 }
@@ -147,6 +150,7 @@ export function createTrace(
   sessionId: string,
   turnNum: number,
   turn: Turn,
+  sessionMetadata?: SessionMetadata,
 ): void {
   const { userText, lastAssistantText, model, traceStart, traceEnd } =
     computeTraceContext(turn);
@@ -170,6 +174,12 @@ export function createTrace(
       source: "claude-code",
       turn_number: turnNum,
       session_id: sessionId,
+      ...(sessionMetadata && {
+        version: sessionMetadata.version,
+        slug: sessionMetadata.slug,
+        cwd: sessionMetadata.cwd,
+        git_branch: sessionMetadata.gitBranch,
+      }),
     },
   });
 

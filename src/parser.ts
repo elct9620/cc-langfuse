@@ -73,11 +73,18 @@ class TurnBuilder {
   private accumulator = new AssistantPartAccumulator();
   private currentToolResults: Message[] = [];
   private lastCompleteTurnEnd = 0;
+  private pendingDurationMs: number | undefined = undefined;
 
   build(messages: Message[]): GroupTurnsResult {
     let idx = 0;
     for (const msg of messages) {
       if (msg.isMeta === true) {
+        idx++;
+        continue;
+      }
+
+      if (msg.type === "system" && msg.subtype === "turn_duration") {
+        this.pendingDurationMs = msg.durationMs;
         idx++;
         continue;
       }
@@ -125,7 +132,9 @@ class TurnBuilder {
         user: this.currentUser,
         assistants: this.currentAssistants,
         toolResults: this.currentToolResults,
+        durationMs: this.pendingDurationMs,
       });
+      this.pendingDurationMs = undefined;
       this.lastCompleteTurnEnd = nextIdx;
     }
   }

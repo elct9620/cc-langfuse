@@ -1,6 +1,7 @@
 import type {
   ContentBlock,
   Message,
+  SessionMetadata,
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
@@ -68,6 +69,15 @@ export function getTextContent(msg: Message): string {
     }
   }
   return parts.join("\n");
+}
+
+export function getSessionMetadata(msg: Message): SessionMetadata | undefined {
+  const metadata: SessionMetadata = {};
+  if (msg.version) metadata.version = msg.version;
+  if (msg.slug) metadata.slug = msg.slug;
+  if (msg.cwd) metadata.cwd = msg.cwd;
+  if (msg.gitBranch) metadata.gitBranch = msg.gitBranch;
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
 export function getUsage(msg: Message): Record<string, number> | undefined {

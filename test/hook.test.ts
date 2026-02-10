@@ -1311,6 +1311,132 @@ describe("processTranscriptWithRecovery", () => {
   });
 });
 
+describe("turn durationMs endTime", () => {
+  it("uses startTime + durationMs as endTime when both are available", async () => {
+    const filePath = setupTranscript([
+      {
+        sessionId: "sess1",
+        type: "user",
+        timestamp: "2025-01-15T10:00:00Z",
+        content: "hello",
+      },
+      {
+        timestamp: "2025-01-15T10:00:05Z",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+      { type: "system", subtype: "turn_duration", durationMs: 3000 },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    // endTime = startTime (10:00:00) + 3000ms = 10:00:03
+    const expectedEnd = new Date("2025-01-15T10:00:03Z");
+    // outer span and rootSpan should end at computed time
+    expect(mockObservationEnd).toHaveBeenCalledWith(expectedEnd);
+  });
+
+  it("falls back to message timestamps when durationMs is not available", async () => {
+    const filePath = setupTranscript([
+      {
+        sessionId: "sess1",
+        type: "user",
+        timestamp: "2025-01-15T10:00:00Z",
+        content: "hello",
+      },
+      {
+        timestamp: "2025-01-15T10:00:05Z",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    // Should use computeTraceEnd fallback (latest message timestamp = 10:00:05)
+    expect(mockObservationEnd).toHaveBeenCalledWith(
+      new Date("2025-01-15T10:00:05Z"),
+    );
+  });
+});
+
+describe("session metadata in trace", () => {
+  it("includes session metadata in updateTrace call", async () => {
+    const filePath = setupTranscript([
+      {
+        sessionId: "sess1",
+        type: "user",
+        content: "hello",
+        version: "1.0.32",
+        slug: "my-project",
+        cwd: "/home/user/project",
+        gitBranch: "main",
+      },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    expect(mockUpdateTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          version: "1.0.32",
+          slug: "my-project",
+          cwd: "/home/user/project",
+          git_branch: "main",
+        }),
+      }),
+    );
+  });
+
+  it("omits session metadata fields when not present", async () => {
+    const filePath = setupTranscript([
+      {
+        sessionId: "sess1",
+        type: "user",
+        content: "hello",
+      },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const state = {};
+    await processTranscript("sess1", filePath, state);
+
+    expect(mockUpdateTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.not.objectContaining({
+          version: expect.anything(),
+        }),
+      }),
+    );
+  });
+});
+
 describe("updateTrace name", () => {
   it("includes name in updateTrace call", async () => {
     const filePath = setupTranscript([

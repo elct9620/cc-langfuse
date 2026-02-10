@@ -16,11 +16,17 @@ interface AssistantMessageBody {
 
 export interface Message {
   type?: string;
+  subtype?: string;
   sessionId?: string;
   timestamp?: string;
   isMeta?: boolean;
   content?: ContentBlock[] | string;
   message?: AssistantMessageBody;
+  version?: string;
+  slug?: string;
+  cwd?: string;
+  gitBranch?: string;
+  durationMs?: number;
 }
 
 export interface TextBlock {
@@ -57,6 +63,14 @@ export interface Turn {
   user: Message;
   assistants: Message[];
   toolResults: Message[];
+  durationMs?: number;
+}
+
+export interface SessionMetadata {
+  version?: string;
+  slug?: string;
+  cwd?: string;
+  gitBranch?: string;
 }
 
 export interface GroupTurnsResult {

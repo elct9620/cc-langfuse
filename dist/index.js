@@ -126,6 +126,14 @@ function getTextContent(msg) {
 	for (const item of content) if (isTextBlock(item)) parts.push(item.text);
 	return parts.join("\n");
 }
+function getSessionMetadata(msg) {
+	const metadata = {};
+	if (msg.version) metadata.version = msg.version;
+	if (msg.slug) metadata.slug = msg.slug;
+	if (msg.cwd) metadata.cwd = msg.cwd;
+	if (msg.gitBranch) metadata.gitBranch = msg.gitBranch;
+	return Object.keys(metadata).length > 0 ? metadata : void 0;
+}
 function getUsage(msg) {
 	const usage = msg.message?.usage;
 	if (!usage) return void 0;
@@ -192,10 +200,16 @@ var TurnBuilder = class {
 	accumulator = new AssistantPartAccumulator();
 	currentToolResults = [];
 	lastCompleteTurnEnd = 0;
+	pendingDurationMs = void 0;
 	build(messages) {
 		let idx = 0;
 		for (const msg of messages) {
 			if (msg.isMeta === true) {
+				idx++;
+				continue;
+			}
+			if (msg.type === "system" && msg.subtype === "turn_duration") {
+				this.pendingDurationMs = msg.durationMs;
 				idx++;
 				continue;
 			}
@@ -232,8 +246,10 @@ var TurnBuilder = class {
 			this.turns.push({
 				user: this.currentUser,
 				assistants: this.currentAssistants,
-				toolResults: this.currentToolResults
+				toolResults: this.currentToolResults,
+				durationMs: this.pendingDurationMs
 			});
+			this.pendingDurationMs = void 0;
 			this.lastCompleteTurnEnd = nextIdx;
 		}
 	}
@@ -329,12 +345,16 @@ function createGenerationObservation(ctx) {
 	generation.end(genEnd);
 }
 function computeTraceContext(turn) {
+	const userText = getTextContent(turn.user);
+	const lastAssistantText = getTextContent(turn.assistants[turn.assistants.length - 1]);
+	const model = turn.assistants[0]?.message?.model ?? "claude";
+	const traceStart = getTimestamp(turn.user);
 	return {
-		userText: getTextContent(turn.user),
-		lastAssistantText: getTextContent(turn.assistants[turn.assistants.length - 1]),
-		model: turn.assistants[0]?.message?.model ?? "claude",
-		traceStart: getTimestamp(turn.user),
-		traceEnd: computeTraceEnd([...turn.assistants, ...turn.toolResults])
+		userText,
+		lastAssistantText,
+		model,
+		traceStart,
+		traceEnd: traceStart && turn.durationMs !== void 0 ? new Date(traceStart.getTime() + turn.durationMs) : computeTraceEnd([...turn.assistants, ...turn.toolResults])
 	};
 }
 function createGenerations(parentObservation, turn, model, userText) {
@@ -351,7 +371,7 @@ function createGenerations(parentObservation, turn, model, userText) {
 		});
 	}
 }
-function createTrace(sessionId, turnNum, turn) {
+function createTrace(sessionId, turnNum, turn, sessionMetadata) {
 	const { userText, lastAssistantText, model, traceStart, traceEnd } = computeTraceContext(turn);
 	const span = startObservation(`Turn ${turnNum}`, {}, traceStart ? { startTime: traceStart } : void 0);
 	span.updateTrace({
@@ -368,7 +388,13 @@ function createTrace(sessionId, turnNum, turn) {
 		metadata: {
 			source: "claude-code",
 			turn_number: turnNum,
-			session_id: sessionId
+			session_id: sessionId,
+			...sessionMetadata && {
+				version: sessionMetadata.version,
+				slug: sessionMetadata.slug,
+				cwd: sessionMetadata.cwd,
+				git_branch: sessionMetadata.gitBranch
+			}
 		}
 	});
 	const rootSpan = startObservation(`Turn ${turnNum}`, {
@@ -422,8 +448,9 @@ async function processTranscript(sessionId, transcriptFile, state) {
 		turns: 0,
 		updatedState: state
 	};
+	const sessionMetadata = turns.length > 0 ? getSessionMetadata(turns[0].user) : void 0;
 	await propagateAttributes({ sessionId }, async () => {
-		for (let i = 0; i < turns.length; i++) createTrace(sessionId, turnCount + i + 1, turns[i]);
+		for (let i = 0; i < turns.length; i++) createTrace(sessionId, turnCount + i + 1, turns[i], sessionMetadata);
 	});
 	const updatedState = computeUpdatedState({
 		state,

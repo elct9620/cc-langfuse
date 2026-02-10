@@ -6,6 +6,7 @@ import {
   getToolCalls,
   getTextContent,
   getUsage,
+  getSessionMetadata,
 } from "../src/content.js";
 import {
   mergeAssistantParts,
@@ -330,6 +331,58 @@ describe("groupTurns", () => {
     expect(consumed).toBe(0);
   });
 
+  it("captures durationMs from system turn_duration message", () => {
+    const messages: Message[] = [
+      { type: "user", content: "hello" },
+      {
+        message: { id: "m1", role: "assistant", content: "hi" },
+      },
+      { type: "system", subtype: "turn_duration", durationMs: 1234 },
+    ];
+    const { turns } = groupTurns(messages);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].durationMs).toBe(1234);
+  });
+
+  it("attaches durationMs to correct turn when multiple turns exist", () => {
+    const messages: Message[] = [
+      { type: "user", content: "first" },
+      { message: { id: "m1", role: "assistant", content: "reply1" } },
+      { type: "system", subtype: "turn_duration", durationMs: 500 },
+      { type: "user", content: "second" },
+      { message: { id: "m2", role: "assistant", content: "reply2" } },
+      { type: "system", subtype: "turn_duration", durationMs: 800 },
+    ];
+    const { turns } = groupTurns(messages);
+    expect(turns).toHaveLength(2);
+    expect(turns[0].durationMs).toBe(500);
+    expect(turns[1].durationMs).toBe(800);
+  });
+
+  it("leaves durationMs undefined when no turn_duration message", () => {
+    const messages: Message[] = [
+      { type: "user", content: "hello" },
+      {
+        message: { id: "m1", role: "assistant", content: "hi" },
+      },
+    ];
+    const { turns } = groupTurns(messages);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].durationMs).toBeUndefined();
+  });
+
+  it("consumes system turn_duration messages in consumed count", () => {
+    const messages: Message[] = [
+      { type: "user", content: "hello" },
+      { message: { id: "m1", role: "assistant", content: "hi" } },
+      { type: "system", subtype: "turn_duration", durationMs: 1234 },
+      { type: "user", content: "incomplete" },
+    ];
+    const { turns, consumed } = groupTurns(messages);
+    expect(turns).toHaveLength(1);
+    expect(consumed).toBe(3);
+  });
+
   it("does not produce turns when messages start with tool_result", () => {
     const messages = [
       {
@@ -423,6 +476,44 @@ describe("getUsage", () => {
       output: 50,
       total: 150,
     });
+  });
+});
+
+describe("getSessionMetadata", () => {
+  it("extracts metadata fields from a message", () => {
+    const msg: Message = {
+      type: "user",
+      content: "hello",
+      version: "1.0.32",
+      slug: "my-project",
+      cwd: "/home/user/project",
+      gitBranch: "main",
+    };
+    const metadata = getSessionMetadata(msg);
+    expect(metadata).toEqual({
+      version: "1.0.32",
+      slug: "my-project",
+      cwd: "/home/user/project",
+      gitBranch: "main",
+    });
+  });
+
+  it("returns partial metadata when some fields are missing", () => {
+    const msg: Message = {
+      type: "user",
+      content: "hello",
+      version: "1.0.32",
+    };
+    const metadata = getSessionMetadata(msg);
+    expect(metadata).toEqual({ version: "1.0.32" });
+  });
+
+  it("returns undefined when no metadata fields are present", () => {
+    const msg: Message = {
+      type: "user",
+      content: "hello",
+    };
+    expect(getSessionMetadata(msg)).toBeUndefined();
   });
 });
 

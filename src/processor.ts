@@ -1,6 +1,7 @@
 import { propagateAttributes } from "@langfuse/tracing";
 import { debug } from "./logger.js";
 import { groupTurns } from "./parser.js";
+import { getSessionMetadata } from "./content.js";
 import { parseNewMessages } from "./filesystem.js";
 import type { State } from "./filesystem.js";
 import { createTrace } from "./tracer.js";
@@ -54,9 +55,12 @@ export async function processTranscript(
   const { turns, consumed } = groupTurns(parsed.messages);
   if (turns.length === 0) return { turns: 0, updatedState: state };
 
+  const sessionMetadata =
+    turns.length > 0 ? getSessionMetadata(turns[0].user) : undefined;
+
   await propagateAttributes({ sessionId }, async () => {
     for (let i = 0; i < turns.length; i++) {
-      createTrace(sessionId, turnCount + i + 1, turns[i]);
+      createTrace(sessionId, turnCount + i + 1, turns[i], sessionMetadata);
     }
   });
 
