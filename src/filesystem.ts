@@ -99,23 +99,12 @@ export function parseNewMessages(
   const raw = readFileSync(transcriptFile, "utf8").trim();
   if (!raw) return null;
 
-  let offset = 0;
-  for (let skip = 0; skip < lastLine && offset < raw.length; skip++) {
-    const nl = raw.indexOf("\n", offset);
-    if (nl === -1) {
-      offset = raw.length;
-      break;
-    }
-    offset = nl + 1;
-  }
-
-  const remaining = raw.slice(offset);
-  if (!remaining) {
+  const lines = raw.split("\n").slice(lastLine);
+  if (lines.length === 0) {
     debug(`No new lines to process (last: ${lastLine})`);
     return null;
   }
 
-  const lines = remaining.split("\n");
   const messages: Message[] = [];
   const lineOffsets: number[] = [];
   for (let i = 0; i < lines.length; i++) {
