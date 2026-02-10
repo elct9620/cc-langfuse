@@ -14,7 +14,7 @@ interface GenerationContext {
   parentObservation: LangfuseObservation;
   assistant: Message;
   index: number;
-  turn: Turn;
+  toolResults: Message[];
   model: string;
   userText: string;
   genEnd: Date | undefined;
@@ -75,12 +75,19 @@ function createToolObservations(
 }
 
 function createGenerationObservation(ctx: GenerationContext): void {
-  const { parentObservation, assistant, index, turn, model, userText, genEnd } =
-    ctx;
+  const {
+    parentObservation,
+    assistant,
+    index,
+    toolResults,
+    model,
+    userText,
+    genEnd,
+  } = ctx;
   const assistantText = getTextContent(assistant);
   const assistantModel = assistant.message?.model ?? model;
   const toolUseBlocks = getToolCalls(assistant);
-  const toolCalls = matchToolResults(toolUseBlocks, turn.toolResults);
+  const toolCalls = matchToolResults(toolUseBlocks, toolResults);
 
   const genStart = getTimestamp(assistant);
   const usageDetails = getUsage(assistant);
@@ -139,7 +146,7 @@ function createGenerations(
       parentObservation,
       assistant: turn.assistants[i],
       index: i,
-      turn,
+      toolResults: turn.toolResults,
       model,
       userText,
       genEnd: nextGenStart ?? now,
