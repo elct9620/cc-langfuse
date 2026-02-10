@@ -103,18 +103,27 @@ Session (Session ID)
 
 Each level carries the following data:
 
-| Level      | input                                | output                             |
-| ---------- | ------------------------------------ | ---------------------------------- |
-| Trace      | User message                         | Last Generation's assistant text   |
-| Root Span  | User message                         | Last Generation's assistant text   |
-| Generation | User message (first Generation only) | Assistant text for that invocation |
-| Tool       | Tool call arguments                  | Tool execution result              |
+| Level      | input                                | output                             | level     |
+| ---------- | ------------------------------------ | ---------------------------------- | --------- |
+| Trace      | User message                         | Last Generation's assistant text   | —         |
+| Root Span  | User message                         | Last Generation's assistant text   | —         |
+| Generation | User message (first Generation only) | Assistant text for that invocation | —         |
+| Tool       | Tool call arguments                  | Tool execution result              | See below |
 
 - **Session** — Groups all turns by the transcript's session ID, corresponding to one Claude Code conversation
 - **Trace** — One Turn (a user → assistant exchange), named `Turn N`. `output` is the final response the user sees.
 - **Root Span** (`asType: "agent"`) — The root observation of each turn, typed as `"agent"` to represent a Claude Code agent interaction. Carries the same `input`/`output` as its parent Trace.
 - **Generation** (`asType: "generation"`) — One model invocation, named after the model. A single Turn may contain multiple Generations when the model calls tools and responds again. Only the first Generation carries `input` (the user's message). Subsequent Generations omit `input`; their context (tool results) is already captured in the preceding Generation's Tool observations.
-- **Tool** (`asType: "tool"`) — One tool execution, named `{name}` (the tool name directly); parented under the Generation that initiated the tool call
+- **Tool** (`asType: "tool"`) — One tool execution, named `{name}` (the tool name directly); parented under the Generation that initiated the tool call. Each tool_result block in the JSONL transcript carries an `is_error` boolean field indicating whether the tool call failed.
+
+#### Tool Error Status
+
+Each `tool_result` block in the transcript contains an `is_error` field (`true` or `false`). This maps to the Langfuse observation's `level`:
+
+| `is_error` | Langfuse `level` |
+| ---------- | ---------------- |
+| `true`     | `"ERROR"`        |
+| `false`    | (default)        |
 
 #### Usage and Cost
 
