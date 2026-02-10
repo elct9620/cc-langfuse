@@ -75,21 +75,11 @@ function findPreviousSession(transcriptPath, currentSessionId) {
 function parseNewMessages(transcriptFile, lastLine) {
 	const raw = readFileSync(transcriptFile, "utf8").trim();
 	if (!raw) return null;
-	let offset = 0;
-	for (let skip = 0; skip < lastLine && offset < raw.length; skip++) {
-		const nl = raw.indexOf("\n", offset);
-		if (nl === -1) {
-			offset = raw.length;
-			break;
-		}
-		offset = nl + 1;
-	}
-	const remaining = raw.slice(offset);
-	if (!remaining) {
+	const lines = raw.split("\n").slice(lastLine);
+	if (lines.length === 0) {
 		debug(`No new lines to process (last: ${lastLine})`);
 		return null;
 	}
-	const lines = remaining.split("\n");
 	const messages = [];
 	const lineOffsets = [];
 	for (let i = 0; i < lines.length; i++) try {
@@ -339,10 +329,10 @@ function createToolObservations(parentObservation, toolCalls, genStart) {
 	}
 }
 function createGenerationObservation(ctx) {
-	const { parentObservation, assistant, index, turn, model, userText, genEnd } = ctx;
+	const { parentObservation, assistant, index, toolResults, model, userText, genEnd } = ctx;
 	const assistantText = getTextContent(assistant);
 	const assistantModel = assistant.message?.model ?? model;
-	const toolCalls = matchToolResults(getToolCalls(assistant), turn.toolResults);
+	const toolCalls = matchToolResults(getToolCalls(assistant), toolResults);
 	const genStart = getTimestamp(assistant);
 	const usageDetails = getUsage(assistant);
 	const generation = startObservation(assistantModel, {
@@ -384,12 +374,25 @@ function createGenerations(parentObservation, turn, model, userText, now) {
 			parentObservation,
 			assistant: turn.assistants[i],
 			index: i,
-			turn,
+			toolResults: turn.toolResults,
 			model,
 			userText,
 			genEnd: nextGenStart ?? now
 		});
 	}
+}
+function buildTraceMetadata(turnNum, sessionId, sessionMetadata) {
+	return {
+		source: "claude-code",
+		turn_number: turnNum,
+		session_id: sessionId,
+		...sessionMetadata && {
+			version: sessionMetadata.version,
+			slug: sessionMetadata.slug,
+			cwd: sessionMetadata.cwd,
+			git_branch: sessionMetadata.gitBranch
+		}
+	};
 }
 function createTrace(sessionId, turnNum, turn, sessionMetadata) {
 	const { userText, lastAssistantText, model, traceStart, traceEnd } = computeTraceContext(turn);
@@ -405,17 +408,7 @@ function createTrace(sessionId, turnNum, turn, sessionMetadata) {
 			role: "assistant",
 			content: lastAssistantText
 		},
-		metadata: {
-			source: "claude-code",
-			turn_number: turnNum,
-			session_id: sessionId,
-			...sessionMetadata && {
-				version: sessionMetadata.version,
-				slug: sessionMetadata.slug,
-				cwd: sessionMetadata.cwd,
-				git_branch: sessionMetadata.gitBranch
-			}
-		}
+		metadata: buildTraceMetadata(turnNum, sessionId, sessionMetadata)
 	});
 	const rootSpan = startObservation(`Turn ${turnNum}`, {
 		input: {
@@ -438,18 +431,6 @@ function createTrace(sessionId, turnNum, turn, sessionMetadata) {
 
 //#endregion
 //#region src/processor.ts
-function computeUpdatedState(params) {
-	const { state, sessionId, turnCount, newTurns, consumed, lineOffsets, lastLine, now } = params;
-	const newLastLine = consumed > 0 ? lineOffsets[consumed - 1] : lastLine;
-	return {
-		...state,
-		[sessionId]: {
-			last_line: newLastLine,
-			turn_count: turnCount + newTurns,
-			updated: now.toISOString()
-		}
-	};
-}
 async function processTranscript(sessionId, transcriptFile, state) {
 	const sessionState = state[sessionId] ?? {
 		last_line: 0,
@@ -472,16 +453,15 @@ async function processTranscript(sessionId, transcriptFile, state) {
 	await propagateAttributes({ sessionId }, async () => {
 		for (let i = 0; i < turns.length; i++) createTrace(sessionId, turnCount + i + 1, turns[i], sessionMetadata);
 	});
-	const updatedState = computeUpdatedState({
-		state,
-		sessionId,
-		turnCount,
-		newTurns: turns.length,
-		consumed,
-		lineOffsets: parsed.lineOffsets,
-		lastLine,
-		now: /* @__PURE__ */ new Date()
-	});
+	const newLastLine = consumed > 0 ? parsed.lineOffsets[consumed - 1] : lastLine;
+	const updatedState = {
+		...state,
+		[sessionId]: {
+			last_line: newLastLine,
+			turn_count: turnCount + turns.length,
+			updated: (/* @__PURE__ */ new Date()).toISOString()
+		}
+	};
 	return {
 		turns: turns.length,
 		updatedState
@@ -539,6 +519,15 @@ function resolveEnvVars() {
 		baseUrl: baseUrl || void 0
 	};
 }
+async function processSession(input, state) {
+	const previous = findPreviousSession(input.transcript_path, input.session_id);
+	return previous ? processTranscriptWithRecovery(input.session_id, input.transcript_path, previous.sessionId, previous.transcriptPath, state) : processTranscript(input.session_id, input.transcript_path, state);
+}
+function logDuration(scriptStart, turns) {
+	const duration = (Date.now() - scriptStart) / 1e3;
+	log("INFO", `Processed ${turns} turns in ${duration.toFixed(1)}s`);
+	if (duration > HOOK_WARNING_THRESHOLD_SECONDS) log("WARN", `Hook took ${duration.toFixed(1)}s (>3min), consider optimizing`);
+}
 async function hook() {
 	const scriptStart = Date.now();
 	debug("Hook started");
@@ -559,16 +548,11 @@ async function hook() {
 		await sdk.shutdown();
 		return;
 	}
-	const sessionId = input.session_id;
-	const filePath = input.transcript_path;
-	debug(`Processing session: ${sessionId}`);
+	debug(`Processing session: ${input.session_id}`);
 	try {
-		const previous = findPreviousSession(filePath, sessionId);
-		const { turns, updatedState } = previous ? await processTranscriptWithRecovery(sessionId, filePath, previous.sessionId, previous.transcriptPath, state) : await processTranscript(sessionId, filePath, state);
+		const { turns, updatedState } = await processSession(input, state);
 		saveState(updatedState);
-		const duration = (Date.now() - scriptStart) / 1e3;
-		log("INFO", `Processed ${turns} turns in ${duration.toFixed(1)}s`);
-		if (duration > HOOK_WARNING_THRESHOLD_SECONDS) log("WARN", `Hook took ${duration.toFixed(1)}s (>3min), consider optimizing`);
+		logDuration(scriptStart, turns);
 	} catch (e) {
 		log("ERROR", `Failed to process transcript: ${e instanceof Error ? e.message : String(e)}`);
 	} finally {
