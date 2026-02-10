@@ -260,7 +260,8 @@ function matchToolResults(toolUseBlocks, toolResults) {
 			name: block.name,
 			input: block.input,
 			output: match?.block.content ?? null,
-			timestamp: match ? getTimestamp(match.message) : void 0
+			timestamp: match ? getTimestamp(match.message) : void 0,
+			is_error: match?.block.is_error ?? false
 		};
 	});
 }
@@ -293,7 +294,10 @@ function createToolObservations(parentObservation, toolCalls, genStart) {
 		}, {
 			asType: "tool",
 			...childObservationOptions(parentObservation, nextStart)
-		}).update({ output: toolCall.output }).end(toolCall.timestamp);
+		}).update({
+			output: toolCall.output,
+			...toolCall.is_error && { level: "ERROR" }
+		}).end(toolCall.timestamp);
 		nextStart = toolCall.timestamp ?? nextStart;
 		debug(`Created tool observation for: ${toolCall.name}`);
 	}

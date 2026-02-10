@@ -450,6 +450,7 @@ describe("matchToolResults", () => {
       input: { path: "/a" },
       output: "file data",
       timestamp: undefined,
+      is_error: false,
     });
     expect(calls[1]).toEqual({
       id: "t2",
@@ -457,6 +458,7 @@ describe("matchToolResults", () => {
       input: { path: "/b" },
       output: "ok",
       timestamp: undefined,
+      is_error: false,
     });
   });
 
@@ -502,5 +504,63 @@ describe("matchToolResults", () => {
 
     const calls = matchToolResults(toolUseBlocks, toolResults);
     expect(calls[0].timestamp).toBeUndefined();
+  });
+
+  it("should set is_error to true when tool result has is_error true", () => {
+    const toolUseBlocks: ToolUseBlock[] = [
+      {
+        type: "tool_use",
+        id: "t1",
+        name: "Bash",
+        input: { command: "exit 1" },
+      },
+    ];
+    const toolResults = [
+      {
+        type: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t1",
+            content: "command failed",
+            is_error: true,
+          },
+        ],
+      },
+    ];
+
+    const calls = matchToolResults(toolUseBlocks, toolResults);
+    expect(calls[0].is_error).toBe(true);
+  });
+
+  it("should set is_error to false when tool result has is_error false", () => {
+    const toolUseBlocks: ToolUseBlock[] = [
+      { type: "tool_use", id: "t1", name: "Read", input: { path: "/a" } },
+    ];
+    const toolResults = [
+      {
+        type: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t1",
+            content: "file data",
+            is_error: false,
+          },
+        ],
+      },
+    ];
+
+    const calls = matchToolResults(toolUseBlocks, toolResults);
+    expect(calls[0].is_error).toBe(false);
+  });
+
+  it("should default is_error to false when tool result is missing", () => {
+    const toolUseBlocks: ToolUseBlock[] = [
+      { type: "tool_use", id: "t1", name: "Read", input: {} },
+    ];
+
+    const calls = matchToolResults(toolUseBlocks, []);
+    expect(calls[0].is_error).toBe(false);
   });
 });

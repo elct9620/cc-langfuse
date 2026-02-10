@@ -39,6 +39,7 @@ export interface ToolResultBlock {
   type: "tool_result";
   tool_use_id: string;
   content: unknown;
+  is_error?: boolean;
 }
 
 export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
@@ -49,6 +50,7 @@ export interface ToolCall {
   input: unknown;
   output: unknown;
   timestamp?: Date;
+  is_error?: boolean;
 }
 
 export interface Turn {

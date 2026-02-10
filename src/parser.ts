@@ -164,6 +164,7 @@ export function matchToolResults(
       input: block.input,
       output: match?.block.content ?? null,
       timestamp: match ? getTimestamp(match.message) : undefined,
+      is_error: match?.block.is_error ?? false,
     };
   });
 }

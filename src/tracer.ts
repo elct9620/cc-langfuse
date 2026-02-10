@@ -63,7 +63,12 @@ function createToolObservations(
         ...childObservationOptions(parentObservation, nextStart),
       },
     );
-    tool.update({ output: toolCall.output }).end(toolCall.timestamp);
+    tool
+      .update({
+        output: toolCall.output,
+        ...(toolCall.is_error && { level: "ERROR" as const }),
+      })
+      .end(toolCall.timestamp);
     nextStart = toolCall.timestamp ?? nextStart;
     debug(`Created tool observation for: ${toolCall.name}`);
   }
