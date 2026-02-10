@@ -3,6 +3,8 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { setupTranscriptAt } from "./helpers/transcript.js";
+
 const testDir = join(tmpdir(), `cc-langfuse-fs-test-${Date.now()}`);
 
 vi.mock("node:os", async (importOriginal) => {
@@ -20,7 +22,8 @@ afterEach(() => {
   }
 });
 
-const { parseNewMessages, loadState } = await import("../src/filesystem.js");
+const { parseNewMessages, loadState, saveState, findPreviousSession } =
+  await import("../src/filesystem.js");
 
 const STATE_FILE = join(testDir, ".claude", "state", "cc-langfuse_state.json");
 
@@ -217,5 +220,100 @@ describe("loadState", () => {
     };
     writeFileSync(STATE_FILE, JSON.stringify(state));
     expect(loadState()).toEqual(state);
+  });
+});
+
+describe("saveState", () => {
+  it("saves and loads state", () => {
+    const state = {
+      sess1: { last_line: 10, turn_count: 3, updated: "2024-01-01" },
+    };
+    saveState(state);
+    const loaded = loadState();
+    expect(loaded).toEqual(state);
+  });
+});
+
+describe("findPreviousSession", () => {
+  it("returns previous session when first line has different sessionId", () => {
+    // Create previous session transcript
+    setupTranscriptAt(testDir, "prev-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    // Current transcript starts with previous session's last message
+    const currentPath = setupTranscriptAt(testDir, "current-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "plan mode msg" },
+      { sessionId: "current-session", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m2",
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const result = findPreviousSession(currentPath, "current-session");
+    expect(result).not.toBeNull();
+    expect(result!.sessionId).toBe("prev-session");
+    expect(result!.transcriptPath).toContain("prev-session.jsonl");
+  });
+
+  it("returns null when first line sessionId matches current session", () => {
+    const filePath = setupTranscriptAt(testDir, "sess1.jsonl", [
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+
+    const result = findPreviousSession(filePath, "sess1");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when first line has no sessionId (file-history-snapshot)", () => {
+    const filePath = setupTranscriptAt(testDir, "sess1.jsonl", [
+      { type: "file-history-snapshot", messageId: "m0", snapshot: {} },
+      { sessionId: "sess1", type: "user", content: "hello" },
+    ]);
+
+    const result = findPreviousSession(filePath, "sess1");
+    expect(result).toBeNull();
+  });
+
+  it("returns previous session even when previous sessionId already in state", () => {
+    setupTranscriptAt(testDir, "prev-session.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "hello" },
+    ]);
+
+    const filePath = setupTranscriptAt(testDir, "current.jsonl", [
+      { sessionId: "prev-session", type: "user", content: "msg" },
+    ]);
+
+    const result = findPreviousSession(filePath, "current");
+    expect(result).not.toBeNull();
+    expect(result!.sessionId).toBe("prev-session");
+  });
+
+  it("returns null when previous session transcript file does not exist", () => {
+    // Don't create the prev-session.jsonl file
+    const filePath = setupTranscriptAt(testDir, "current.jsonl", [
+      { sessionId: "nonexistent-session", type: "user", content: "msg" },
+    ]);
+
+    const result = findPreviousSession(filePath, "current");
+    expect(result).toBeNull();
   });
 });
