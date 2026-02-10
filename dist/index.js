@@ -22,17 +22,8 @@ function debug(message) {
 
 //#endregion
 //#region src/content.ts
-function isBlockOfType(item, type) {
-	return typeof item === "object" && item !== null && "type" in item && item.type === type;
-}
-function isTextBlock(item) {
-	return isBlockOfType(item, "text");
-}
-function isToolUseBlock(item) {
-	return isBlockOfType(item, "tool_use");
-}
 function isToolResultBlock(item) {
-	return isBlockOfType(item, "tool_result");
+	return item.type === "tool_result";
 }
 function normalizeContent(raw) {
 	if (Array.isArray(raw)) return raw;
@@ -81,11 +72,11 @@ function isToolResult(msg) {
 	return msg.content.some(isToolResultBlock);
 }
 function getToolCalls(msg) {
-	return msg.content.filter(isToolUseBlock);
+	return msg.content.filter((item) => item.type === "tool_use");
 }
 function getTextContent(msg) {
 	const parts = [];
-	for (const item of msg.content) if (isTextBlock(item)) parts.push(item.text);
+	for (const item of msg.content) if (item.type === "text") parts.push(item.text);
 	return parts.join("\n");
 }
 function getSessionMetadata(msg) {
@@ -99,14 +90,12 @@ function getSessionMetadata(msg) {
 function getUsage(msg) {
 	const usage = msg.usage;
 	if (!usage) return void 0;
-	const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : void 0;
-	const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : void 0;
 	const details = {};
-	if (inputTokens !== void 0) details.input = inputTokens;
-	if (outputTokens !== void 0) details.output = outputTokens;
-	if (inputTokens !== void 0 && outputTokens !== void 0) details.total = inputTokens + outputTokens;
-	if (typeof usage.cache_read_input_tokens === "number") details.cache_read_input_tokens = usage.cache_read_input_tokens;
-	if (typeof usage.cache_creation_input_tokens === "number") details.cache_creation_input_tokens = usage.cache_creation_input_tokens;
+	if (usage.input_tokens !== void 0) details.input = usage.input_tokens;
+	if (usage.output_tokens !== void 0) details.output = usage.output_tokens;
+	if (details.input !== void 0 && details.output !== void 0) details.total = details.input + details.output;
+	if (usage.cache_read_input_tokens !== void 0) details.cache_read_input_tokens = usage.cache_read_input_tokens;
+	if (usage.cache_creation_input_tokens !== void 0) details.cache_creation_input_tokens = usage.cache_creation_input_tokens;
 	return Object.keys(details).length > 0 ? details : void 0;
 }
 
@@ -281,7 +270,7 @@ function groupTurns(messages) {
 }
 function findToolResultBlock(toolResults, toolUseId) {
 	for (const msg of toolResults) {
-		const block = msg.content.find((item) => isToolResultBlock(item) && item.tool_use_id === toolUseId);
+		const block = msg.content.find((item) => item.type === "tool_result" && item.tool_use_id === toolUseId);
 		if (block) return {
 			block,
 			message: msg

@@ -5,35 +5,14 @@ import type {
   UserMessage,
   AssistantMessage,
   SessionMetadata,
-  TextBlock,
   ToolUseBlock,
   ToolResultBlock,
 } from "./types.js";
 
 // --- Content block type guards ---
 
-function isBlockOfType<T extends ContentBlock>(
-  item: unknown,
-  type: T["type"],
-): item is T {
-  return (
-    typeof item === "object" &&
-    item !== null &&
-    "type" in item &&
-    item.type === type
-  );
-}
-
-function isTextBlock(item: unknown): item is TextBlock {
-  return isBlockOfType<TextBlock>(item, "text");
-}
-
-function isToolUseBlock(item: unknown): item is ToolUseBlock {
-  return isBlockOfType<ToolUseBlock>(item, "tool_use");
-}
-
-export function isToolResultBlock(item: unknown): item is ToolResultBlock {
-  return isBlockOfType<ToolResultBlock>(item, "tool_result");
+export function isToolResultBlock(item: ContentBlock): item is ToolResultBlock {
+  return item.type === "tool_result";
 }
 
 // --- Message classification ---
@@ -100,13 +79,15 @@ export function isToolResult(msg: UserMessage): boolean {
 }
 
 export function getToolCalls(msg: AssistantMessage): ToolUseBlock[] {
-  return msg.content.filter(isToolUseBlock);
+  return msg.content.filter(
+    (item): item is ToolUseBlock => item.type === "tool_use",
+  );
 }
 
 export function getTextContent(msg: UserMessage | AssistantMessage): string {
   const parts: string[] = [];
   for (const item of msg.content) {
-    if (isTextBlock(item)) {
+    if (item.type === "text") {
       parts.push(item.text);
     }
   }
@@ -130,19 +111,14 @@ export function getUsage(
   const usage = msg.usage;
   if (!usage) return undefined;
 
-  const inputTokens =
-    typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
-  const outputTokens =
-    typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
-
   const details: Record<string, number> = {};
-  if (inputTokens !== undefined) details.input = inputTokens;
-  if (outputTokens !== undefined) details.output = outputTokens;
-  if (inputTokens !== undefined && outputTokens !== undefined)
-    details.total = inputTokens + outputTokens;
-  if (typeof usage.cache_read_input_tokens === "number")
+  if (usage.input_tokens !== undefined) details.input = usage.input_tokens;
+  if (usage.output_tokens !== undefined) details.output = usage.output_tokens;
+  if (details.input !== undefined && details.output !== undefined)
+    details.total = details.input + details.output;
+  if (usage.cache_read_input_tokens !== undefined)
     details.cache_read_input_tokens = usage.cache_read_input_tokens;
-  if (typeof usage.cache_creation_input_tokens === "number")
+  if (usage.cache_creation_input_tokens !== undefined)
     details.cache_creation_input_tokens = usage.cache_creation_input_tokens;
 
   return Object.keys(details).length > 0 ? details : undefined;
