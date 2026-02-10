@@ -125,6 +125,29 @@ Each `tool_result` block in the transcript contains an `is_error` field (`true` 
 | `true`     | `"ERROR"`        |
 | `false`    | (default)        |
 
+#### Session Metadata
+
+The first message in a transcript provides session-level metadata. These fields are extracted once per session and attached to the Trace:
+
+| Field       | Source                   | Trace field | Description                 |
+| ----------- | ------------------------ | ----------- | --------------------------- |
+| `version`   | Any message `.version`   | `metadata`  | Claude Code version         |
+| `slug`      | Any message `.slug`      | `metadata`  | Human-readable session name |
+| `cwd`       | Any message `.cwd`       | `metadata`  | Working directory           |
+| `gitBranch` | Any message `.gitBranch` | `metadata`  | Current git branch          |
+
+These are added to the Trace's `metadata` alongside existing fields (`source`, `turn_number`, `session_id`).
+
+#### Turn Duration
+
+The transcript contains `system` messages with `subtype: "turn_duration"` that provide the wall-clock duration of each turn in milliseconds. When available, `durationMs` is used to compute the Trace and Root Span `endTime`:
+
+```
+endTime = startTime + durationMs
+```
+
+The `turn_duration` system message appears after the assistant messages for a turn. The parser associates it with the preceding turn. If no `turn_duration` message is found for a turn, the fallback is the latest timestamp among all assistant and tool result messages (existing behavior).
+
 #### Usage and Cost
 
 Each Generation observation includes token usage when available in the JSONL transcript:
@@ -142,12 +165,12 @@ Cost is not set explicitly; Langfuse derives cost automatically from the model r
 
 Each observation carries start and end timestamps derived from the JSONL transcript's `timestamp` field:
 
-| Level      | startTime                                          | endTime                                                       |
-| ---------- | -------------------------------------------------- | ------------------------------------------------------------- |
-| Trace      | User message timestamp                             | Latest timestamp among all assistant and tool result messages |
-| Root Span  | User message timestamp                             | Same as Trace endTime                                         |
-| Generation | Assistant message timestamp                        | Next Generation's start, or current wall-clock time if last   |
-| Tool       | Previous Tool's endTime, or Generation's startTime | Matching tool_result message timestamp                        |
+| Level      | startTime                                          | endTime                                                                              |
+| ---------- | -------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Trace      | User message timestamp                             | `startTime + durationMs` if available; otherwise latest timestamp among all messages |
+| Root Span  | User message timestamp                             | Same as Trace endTime                                                                |
+| Generation | Assistant message timestamp                        | Next Generation's start, or current wall-clock time if last                          |
+| Tool       | Previous Tool's endTime, or Generation's startTime | Matching tool_result message timestamp                                               |
 
 Tools within a Generation are sequential: the first Tool starts at the Generation's startTime, and each subsequent Tool starts at the previous Tool's endTime (its tool_result timestamp). This reflects that Claude Code executes tool calls one after another, not in parallel.
 

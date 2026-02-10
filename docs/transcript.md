@@ -100,6 +100,132 @@ Meta messages can also appear as assistant messages:
 }
 ```
 
+### System Message
+
+Messages with `type: "system"` are emitted by Claude Code itself (not the model). They carry a `subtype` field.
+
+#### `turn_duration` subtype
+
+Emitted once per turn with the wall-clock duration in milliseconds:
+
+```json
+{
+  "type": "system",
+  "subtype": "turn_duration",
+  "durationMs": 90602,
+  "isMeta": false,
+  "timestamp": "2026-02-10T15:04:00.511Z"
+}
+```
+
+#### `stop_hook_summary` subtype
+
+Emitted after Stop hooks execute. Contains hook execution summary:
+
+```json
+{
+  "type": "system",
+  "subtype": "stop_hook_summary",
+  "hookCount": 4,
+  "hookInfos": [
+    { "command": "afplay /System/Library/Sounds/Glass.aiff" },
+    { "command": "pnpm dlx github:elct9620/cc-langfuse#main" }
+  ],
+  "hookErrors": [],
+  "preventedContinuation": false,
+  "stopReason": "",
+  "hasOutput": true,
+  "level": "suggestion",
+  "timestamp": "2026-02-10T15:04:00.508Z"
+}
+```
+
+### Progress Message
+
+Messages with `type: "progress"` report real-time execution progress. They carry a `data` object with a nested `type` field and a top-level `toolUseID` linking them to the originating tool call.
+
+#### `hook_progress` data type
+
+Reports hook execution for Pre/Post tool use events:
+
+```json
+{
+  "type": "progress",
+  "toolUseID": "toolu_01EukdmbuV3oPf4ndVj4KWeF",
+  "data": {
+    "type": "hook_progress",
+    "hookEvent": "PostToolUse",
+    "hookName": "PostToolUse:Read",
+    "command": "claude-code-wakatime"
+  }
+}
+```
+
+Common `hookEvent` values: `SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`.
+
+#### `agent_progress` data type
+
+Reports subagent (Task tool) execution progress. Contains the subagent's messages and prompt:
+
+```json
+{
+  "type": "progress",
+  "data": {
+    "type": "agent_progress",
+    "agentId": "ad7a687",
+    "prompt": "Find the most recent .jsonl transcript files...",
+    "message": {
+      "type": "assistant",
+      "message": { "model": "claude-opus-4-6", "...": "..." }
+    }
+  }
+}
+```
+
+#### `bash_progress` data type
+
+Reports Bash command execution progress with elapsed time and output:
+
+```json
+{
+  "type": "progress",
+  "data": {
+    "type": "bash_progress",
+    "output": "...",
+    "fullOutput": "...",
+    "elapsedTimeSeconds": 3,
+    "totalLines": 913
+  }
+}
+```
+
+### Queue Operation Message
+
+Messages with `type: "queue-operation"` report background task notifications:
+
+```json
+{
+  "type": "queue-operation",
+  "operation": "enqueue",
+  "timestamp": "2026-02-10T01:45:21.125Z",
+  "sessionId": "fdbb7e74-...",
+  "content": "<task-notification>...</task-notification>"
+}
+```
+
+### File History Snapshot Message
+
+Messages with `type: "file-history-snapshot"` capture file change snapshots. They appear at the start of new sessions:
+
+```json
+{
+  "type": "file-history-snapshot",
+  "isSnapshotUpdate": false,
+  "messageId": "...",
+  "snapshot": { "...": "..." }
+}
+```
+
 ## 3. Content Block Types
 
 The `content` field in messages can be a string or an array of typed blocks:
@@ -234,6 +360,8 @@ The tool result message (line 3) is grouped with the turn instead of starting a 
 
 ## 6. Important Fields
 
+### Core Fields (Used by Parser)
+
 | Field           | Location                                     | Purpose                              |
 | --------------- | -------------------------------------------- | ------------------------------------ |
 | `sessionId`     | User message (typically the first line)      | Session grouping in Langfuse         |
@@ -246,6 +374,66 @@ The tool result message (line 3) is grouped with the turn instead of starting a 
 | `content`       | Any message (top-level or `message.content`) | Message body (string or block array) |
 | `is_error`      | `tool_result` block                          | Tool failure flag → Langfuse `level` |
 | `isMeta`        | Any message                                  | Framework-injected message, skipped  |
+
+### Envelope Fields (Present on All Messages)
+
+Every message in the transcript carries envelope-level metadata:
+
+| Field         | Type    | Example                                  | Purpose                             |
+| ------------- | ------- | ---------------------------------------- | ----------------------------------- |
+| `version`     | string  | `"2.1.38"`                               | Claude Code version                 |
+| `slug`        | string  | `"fuzzy-snuggling-bubble"`               | Human-readable session name         |
+| `cwd`         | string  | `"/Users/user/project"`                  | Working directory                   |
+| `gitBranch`   | string  | `"main"`                                 | Current git branch                  |
+| `isSidechain` | boolean | `false`                                  | Whether this is a sidechain message |
+| `uuid`        | string  | `"4606ca9a-d6a1-43c0-973c-e891e7c83b18"` | Unique message ID                   |
+| `parentUuid`  | string  | `"b21bd79a-39eb-4eff-bcfd-60c7510eadcf"` | Parent message ID (message tree)    |
+
+### Extended Usage Fields
+
+The `message.usage` object on assistant messages includes additional fields beyond token counts:
+
+| Field                                      | Type   | Example           | Purpose                         |
+| ------------------------------------------ | ------ | ----------------- | ------------------------------- |
+| `service_tier`                             | string | `"standard"`      | API service tier                |
+| `inference_geo`                            | string | `"not_available"` | Inference geographic region     |
+| `cache_creation.ephemeral_5m_input_tokens` | number | `0`               | 5-minute ephemeral cache tokens |
+| `cache_creation.ephemeral_1h_input_tokens` | number | `7391`            | 1-hour ephemeral cache tokens   |
+
+Full usage example:
+
+```json
+{
+  "input_tokens": 3,
+  "output_tokens": 10,
+  "cache_read_input_tokens": 28431,
+  "cache_creation_input_tokens": 7391,
+  "cache_creation": {
+    "ephemeral_5m_input_tokens": 0,
+    "ephemeral_1h_input_tokens": 7391
+  },
+  "service_tier": "standard",
+  "inference_geo": "not_available"
+}
+```
+
+### Assistant Message Additional Fields
+
+| Field            | Type   | Example                          | Purpose                                  |
+| ---------------- | ------ | -------------------------------- | ---------------------------------------- |
+| `requestId`      | string | `"req_011CXzaaPoYC4gd2rf7G2fmi"` | Anthropic API request ID for correlation |
+| `permissionMode` | string | `"acceptEdits"`                  | Current permission mode (when present)   |
+
+### System Message Fields
+
+| Field                   | Type    | Location            | Purpose                                    |
+| ----------------------- | ------- | ------------------- | ------------------------------------------ |
+| `subtype`               | string  | All system messages | `"turn_duration"` or `"stop_hook_summary"` |
+| `durationMs`            | number  | `turn_duration`     | Turn wall-clock duration (ms)              |
+| `hookCount`             | number  | `stop_hook_summary` | Number of hooks executed                   |
+| `hookErrors`            | array   | `stop_hook_summary` | Hook execution errors                      |
+| `stopReason`            | string  | `stop_hook_summary` | Why the turn stopped                       |
+| `preventedContinuation` | boolean | `stop_hook_summary` | Whether hooks prevented next turn          |
 
 ### Timestamp Resolution
 
@@ -301,12 +489,14 @@ Session (sessionId)
 
 ### Timing
 
-| Level      | startTime                          | endTime                                                |
-| ---------- | ---------------------------------- | ------------------------------------------------------ |
-| Trace      | User message timestamp             | Latest timestamp among all assistants and tool results |
-| Root Span  | User message timestamp             | Same as Trace endTime                                  |
-| Generation | Assistant message timestamp        | Next Generation's startTime, or `new Date()` if last   |
-| Tool       | Parent assistant message timestamp | Matching `tool_result` message timestamp               |
+| Level      | startTime                          | endTime                                                                              |
+| ---------- | ---------------------------------- | ------------------------------------------------------------------------------------ |
+| Trace      | User message timestamp             | `startTime + durationMs` if available; otherwise latest timestamp among all messages |
+| Root Span  | User message timestamp             | Same as Trace endTime                                                                |
+| Generation | Assistant message timestamp        | Next Generation's startTime, or `new Date()` if last                                 |
+| Tool       | Parent assistant message timestamp | Matching `tool_result` message timestamp                                             |
+
+`durationMs` comes from `system` messages with `subtype: "turn_duration"` (see [System Message](#system-message)). If unavailable, the fallback is the latest timestamp among all assistants and tool results.
 
 If a message lacks a `timestamp` field, timing for that observation is omitted (SDK defaults apply).
 
@@ -325,11 +515,11 @@ If `usage` is absent, `usageDetails` is omitted entirely.
 
 ### Metadata
 
-| Level      | Metadata                                             |
-| ---------- | ---------------------------------------------------- |
-| Trace      | `{ source: "claude-code", turn_number, session_id }` |
-| Generation | `{ tool_count: N }`                                  |
-| Tool       | `{ tool_name, tool_id }`                             |
+| Level      | Metadata                                                                             |
+| ---------- | ------------------------------------------------------------------------------------ |
+| Trace      | `{ source: "claude-code", turn_number, session_id, version, slug, cwd, git_branch }` |
+| Generation | `{ tool_count: N }`                                                                  |
+| Tool       | `{ tool_name, tool_id }`                                                             |
 
 ## 8. Incremental Processing
 
