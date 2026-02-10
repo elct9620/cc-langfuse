@@ -4,6 +4,7 @@ import { log, debug } from "./logger.js";
 
 const HOOK_WARNING_THRESHOLD_SECONDS = 180;
 import { loadState, saveState, findPreviousSession } from "./filesystem.js";
+import type { State } from "./filesystem.js";
 import {
   processTranscript,
   processTranscriptWithRecovery,
@@ -79,6 +80,35 @@ function resolveEnvVars(): LangfuseConfig | null {
   return { publicKey, secretKey, baseUrl: baseUrl || undefined };
 }
 
+async function processSession(
+  input: HookInput,
+  state: State,
+): Promise<{ turns: number; updatedState: State }> {
+  const previous = findPreviousSession(input.transcript_path, input.session_id);
+
+  return previous
+    ? processTranscriptWithRecovery(
+        input.session_id,
+        input.transcript_path,
+        previous.sessionId,
+        previous.transcriptPath,
+        state,
+      )
+    : processTranscript(input.session_id, input.transcript_path, state);
+}
+
+function logDuration(scriptStart: number, turns: number): void {
+  const duration = (Date.now() - scriptStart) / 1000;
+  log("INFO", `Processed ${turns} turns in ${duration.toFixed(1)}s`);
+
+  if (duration > HOOK_WARNING_THRESHOLD_SECONDS) {
+    log(
+      "WARN",
+      `Hook took ${duration.toFixed(1)}s (>3min), consider optimizing`,
+    );
+  }
+}
+
 export async function hook(): Promise<void> {
   const scriptStart = Date.now();
   debug("Hook started");
@@ -108,35 +138,12 @@ export async function hook(): Promise<void> {
     return;
   }
 
-  const sessionId = input.session_id;
-  const filePath = input.transcript_path;
-  debug(`Processing session: ${sessionId}`);
+  debug(`Processing session: ${input.session_id}`);
 
   try {
-    const previous = findPreviousSession(filePath, sessionId);
-
-    const result = previous
-      ? await processTranscriptWithRecovery(
-          sessionId,
-          filePath,
-          previous.sessionId,
-          previous.transcriptPath,
-          state,
-        )
-      : await processTranscript(sessionId, filePath, state);
-
-    const { turns, updatedState } = result;
+    const { turns, updatedState } = await processSession(input, state);
     saveState(updatedState);
-
-    const duration = (Date.now() - scriptStart) / 1000;
-    log("INFO", `Processed ${turns} turns in ${duration.toFixed(1)}s`);
-
-    if (duration > HOOK_WARNING_THRESHOLD_SECONDS) {
-      log(
-        "WARN",
-        `Hook took ${duration.toFixed(1)}s (>3min), consider optimizing`,
-      );
-    }
+    logDuration(scriptStart, turns);
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     log("ERROR", `Failed to process transcript: ${message}`);
