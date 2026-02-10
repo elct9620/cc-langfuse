@@ -125,15 +125,18 @@ A tool invocation request from the assistant:
 
 ### ToolResultBlock
 
-The result of a tool execution, matched to its request by `tool_use_id`:
+The result of a tool execution, matched to its request by `tool_use_id`. An optional `is_error` boolean indicates whether the tool call failed:
 
 ```json
 {
   "type": "tool_result",
   "tool_use_id": "t1",
-  "content": "file data"
+  "content": "file data",
+  "is_error": false
 }
 ```
+
+When `is_error` is `true`, the corresponding Langfuse tool observation is created with `level: "ERROR"`. If `is_error` is absent, it defaults to `false`.
 
 ## 4. Role Detection
 
@@ -241,6 +244,7 @@ The tool result message (line 3) is grouped with the turn instead of starting a 
 | `message.usage` | Assistant message                            | Token usage details                  |
 | `type`          | User / tool result messages                  | Role detection (`"user"`)            |
 | `content`       | Any message (top-level or `message.content`) | Message body (string or block array) |
+| `is_error`      | `tool_result` block                          | Tool failure flag → Langfuse `level` |
 | `isMeta`        | Any message                                  | Framework-injected message, skipped  |
 
 ### Timestamp Resolution
@@ -285,12 +289,12 @@ Session (sessionId)
 
 ### Data Mapping
 
-| Level      | Name      | input                                              | output                                              |
-| ---------- | --------- | -------------------------------------------------- | --------------------------------------------------- |
-| Trace      | `Turn N`  | `{ role: "user", content: userText }`              | `{ role: "assistant", content: lastAssistantText }` |
-| Root Span  | `Turn N`  | `{ role: "user", content: userText }`              | `{ role: "assistant", content: lastAssistantText }` |
-| Generation | `{model}` | `{ role: "user", content: userText }` (first only) | `{ role: "assistant", content: assistantText }`     |
-| Tool       | `{name}`  | Tool call `input`                                  | Matched `tool_result` content                       |
+| Level      | Name      | input                                              | output                                                      |
+| ---------- | --------- | -------------------------------------------------- | ----------------------------------------------------------- |
+| Trace      | `Turn N`  | `{ role: "user", content: userText }`              | `{ role: "assistant", content: lastAssistantText }`         |
+| Root Span  | `Turn N`  | `{ role: "user", content: userText }`              | `{ role: "assistant", content: lastAssistantText }`         |
+| Generation | `{model}` | `{ role: "user", content: userText }` (first only) | `{ role: "assistant", content: assistantText }`             |
+| Tool       | `{name}`  | Tool call `input`                                  | Matched `tool_result` content (level `ERROR` if `is_error`) |
 
 - Only the **first** Generation in a turn carries `input`. Subsequent Generations omit it.
 - The Trace and Root Span both use the **last** assistant message's text as output.
