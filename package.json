@@ -24,7 +24,7 @@
     "prettier": "^3.8.1",
     "rolldown": "1.0.0-rc.3",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.0"
   },
   "dependencies": {
     "@langfuse/otel": "^4.0.0",
