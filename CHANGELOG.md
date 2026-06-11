@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/elct9620/cc-langfuse/compare/v0.2.1...v0.2.2) (2026-06-11)
+
+
+### Miscellaneous Chores
+
+* release 0.2.2 with @opentelemetry/sdk-node 0.217.0 ([f6aeba8](https://github.com/elct9620/cc-langfuse/commit/f6aeba8ab8752510dc254676ec15e7bb482df0a4))
+
 ## [0.2.1](https://github.com/elct9620/cc-langfuse/compare/v0.2.0...v0.2.1) (2026-02-10)
 
 
