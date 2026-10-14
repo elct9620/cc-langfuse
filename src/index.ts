@@ -1,8 +1,12 @@
+import net from "node:net";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { log, debug } from "./logger.js";
 
 const HOOK_WARNING_THRESHOLD_SECONDS = 180;
+// Node gives up on each resolved address after 250ms by default, which fails
+// every attempt when the route to the Langfuse edge has a higher RTT.
+const CONNECT_ATTEMPT_TIMEOUT_MS = 2000;
 import { loadState, saveState, findPreviousSession } from "./filesystem.js";
 import type { State } from "./filesystem.js";
 import {
@@ -127,6 +131,7 @@ export async function hook(): Promise<void> {
     return;
   }
 
+  net.setDefaultAutoSelectFamilyAttemptTimeout(CONNECT_ATTEMPT_TIMEOUT_MS);
   const { sdk, spanProcessor } = initializeSDK(config);
 
   const state = loadState();
@@ -140,15 +145,30 @@ export async function hook(): Promise<void> {
 
   debug(`Processing session: ${input.session_id}`);
 
+  let result: { turns: number; updatedState: State } | null = null;
   try {
-    const { turns, updatedState } = await processSession(input, state);
-    saveState(updatedState);
-    logDuration(scriptStart, turns);
+    result = await processSession(input, state);
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : String(e);
-    log("ERROR", `Failed to process transcript: ${message}`);
-  } finally {
+    log("ERROR", `Failed to process transcript: ${describeError(e)}`);
+  }
+
+  // State advances only after the flush succeeds, so turns that failed to
+  // reach Langfuse are resent by the next hook run instead of being lost.
+  try {
     await spanProcessor.forceFlush();
+    if (result) {
+      saveState(result.updatedState);
+      logDuration(scriptStart, result.turns);
+    }
+  } catch (e: unknown) {
+    log("ERROR", `Failed to send traces to Langfuse: ${describeError(e)}`);
+  } finally {
     await sdk.shutdown();
   }
+}
+
+function describeError(e: unknown): string {
+  if (!(e instanceof Error)) return String(e);
+  const code = (e as NodeJS.ErrnoException).code;
+  return code ? `${code} ${e.message}`.trim() : e.message;
 }

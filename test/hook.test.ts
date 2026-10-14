@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
+import net from "node:net";
 
 import {
   mockStartObservation,
@@ -56,6 +57,7 @@ afterEach(() => {
 
 // Import after mocks
 const { hook, readHookInput } = await import("../src/index.js");
+const { loadState } = await import("../src/filesystem.js");
 const { NodeSDK } = await import("@opentelemetry/sdk-node");
 const { LangfuseSpanProcessor } = await import("@langfuse/otel");
 
@@ -147,6 +149,71 @@ describe("hook", () => {
 
     expect(mockForceFlush).toHaveBeenCalled();
     expect(mockSdkShutdown).toHaveBeenCalled();
+  });
+
+  it("keeps state unchanged when forceFlush fails so turns are resent", async () => {
+    vi.stubEnv("TRACE_TO_LANGFUSE", "true");
+    vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
+    vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
+
+    const filePath = setupTranscript(testDir, [
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude-sonnet-4-5-20250929",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+    mockStdin({ session_id: "sess1", transcript_path: filePath });
+    mockForceFlush.mockRejectedValueOnce(
+      Object.assign(new Error("connect ETIMEDOUT"), { code: "ETIMEDOUT" }),
+    );
+
+    await expect(hook()).resolves.toBeUndefined();
+
+    expect(loadState()).not.toHaveProperty("sess1");
+    expect(mockSdkShutdown).toHaveBeenCalled();
+  });
+
+  it("saves state after a successful flush", async () => {
+    vi.stubEnv("TRACE_TO_LANGFUSE", "true");
+    vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
+    vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
+
+    const filePath = setupTranscript(testDir, [
+      { sessionId: "sess1", type: "user", content: "hello" },
+      {
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude-sonnet-4-5-20250929",
+          content: [{ type: "text", text: "hi" }],
+        },
+      },
+    ]);
+    mockStdin({ session_id: "sess1", transcript_path: filePath });
+
+    await hook();
+
+    expect(loadState()).toHaveProperty("sess1");
+  });
+
+  it("allows connections slower than Node's 250ms per-address default", async () => {
+    vi.stubEnv("TRACE_TO_LANGFUSE", "true");
+    vi.stubEnv("CC_LANGFUSE_PUBLIC_KEY", "pk-test");
+    vi.stubEnv("CC_LANGFUSE_SECRET_KEY", "sk-test");
+    net.setDefaultAutoSelectFamilyAttemptTimeout(250);
+    mockStdin({
+      session_id: "sess1",
+      transcript_path: "/nonexistent/path.jsonl",
+    });
+
+    await hook();
+
+    expect(net.getDefaultAutoSelectFamilyAttemptTimeout()).toBeGreaterThan(250);
   });
 
   it("initializes NodeSDK and processes transcript", async () => {

@@ -1,3 +1,4 @@
+import net from "node:net";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -484,6 +485,7 @@ async function processTranscriptWithRecovery(currentSessionId, currentFile, prev
 //#endregion
 //#region src/index.ts
 const HOOK_WARNING_THRESHOLD_SECONDS = 180;
+const CONNECT_ATTEMPT_TIMEOUT_MS = 2e3;
 async function readHookInput(input = process.stdin) {
 	const chunks = [];
 	for await (const chunk of input) chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
@@ -545,6 +547,7 @@ async function hook() {
 		log("ERROR", "Langfuse API keys not set (CC_LANGFUSE_PUBLIC_KEY / CC_LANGFUSE_SECRET_KEY)");
 		return;
 	}
+	net.setDefaultAutoSelectFamilyAttemptTimeout(CONNECT_ATTEMPT_TIMEOUT_MS);
 	const { sdk, spanProcessor } = initializeSDK(config);
 	const state = loadState();
 	const input = await readHookInput();
@@ -554,16 +557,28 @@ async function hook() {
 		return;
 	}
 	debug(`Processing session: ${input.session_id}`);
+	let result = null;
 	try {
-		const { turns, updatedState } = await processSession(input, state);
-		saveState(updatedState);
-		logDuration(scriptStart, turns);
+		result = await processSession(input, state);
 	} catch (e) {
-		log("ERROR", `Failed to process transcript: ${e instanceof Error ? e.message : String(e)}`);
-	} finally {
+		log("ERROR", `Failed to process transcript: ${describeError(e)}`);
+	}
+	try {
 		await spanProcessor.forceFlush();
+		if (result) {
+			saveState(result.updatedState);
+			logDuration(scriptStart, result.turns);
+		}
+	} catch (e) {
+		log("ERROR", `Failed to send traces to Langfuse: ${describeError(e)}`);
+	} finally {
 		await sdk.shutdown();
 	}
+}
+function describeError(e) {
+	if (!(e instanceof Error)) return String(e);
+	const code = e.code;
+	return code ? `${code} ${e.message}`.trim() : e.message;
 }
 
 //#endregion
