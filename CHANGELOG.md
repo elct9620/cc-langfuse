@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/elct9620/cc-langfuse/compare/v0.2.2...v0.2.3) (2026-10-14)
+
+
+### Bug Fixes
+
+* keep traces when sending to Langfuse fails ([2a416c8](https://github.com/elct9620/cc-langfuse/commit/2a416c87aed30fd98d75033e475afc7eee2d3042))
+
 ## [0.2.2](https://github.com/elct9620/cc-langfuse/compare/v0.2.1...v0.2.2) (2026-06-11)
 
 
